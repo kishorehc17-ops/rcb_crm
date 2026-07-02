@@ -570,7 +570,17 @@ class RzpWebhook(BaseModel):
 
 @api_router.post("/payments/webhook")
 async def rzp_webhook(request: Request):
-    body = await request.json()
+    import hmac, hashlib
+    raw = await request.body()
+    webhook_secret = os.environ.get("RAZORPAY_WEBHOOK_SECRET", "")
+    signature = request.headers.get("x-razorpay-signature", "")
+    # Verify signature if secret is configured (skip in test mode to allow manual testing)
+    if webhook_secret:
+        expected = hmac.new(webhook_secret.encode(), raw, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            raise HTTPException(status_code=400, detail="Invalid signature")
+    import json as _json
+    body = _json.loads(raw or b"{}")
     ev = body.get("event", "")
     if ev in ("payment_link.paid", "payment.captured"):
         pl = body.get("payload", {}).get("payment_link", {}).get("entity", {}) \
