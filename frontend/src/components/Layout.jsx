@@ -1,25 +1,26 @@
 import React from "react";
 import { NavLink, useNavigate, Outlet } from "react-router-dom";
-import { LayoutDashboard, Users, Package, Receipt, Wallet, UserCog, Sparkles, LogOut } from "lucide-react";
+import { LayoutDashboard, Users, Package, Receipt, Wallet, UserCog, Sparkles, LogOut, Shield } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { motion } from "framer-motion";
 
-const navItems = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, testid: "nav-dashboard" },
-  { to: "/bookings", label: "Bookings", icon: Package, testid: "nav-bookings" },
-  { to: "/pipeline", label: "Pipeline", icon: Sparkles, testid: "nav-pipeline" },
-  { to: "/packages", label: "Packages", icon: Package, testid: "nav-packages" },
-  { to: "/payments", label: "Payments", icon: Wallet, testid: "nav-payments" },
-  { to: "/expenses", label: "Expenses", icon: Receipt, testid: "nav-expenses" },
-  { to: "/vendors", label: "Vendors", icon: Users, testid: "nav-vendors" },
-  { to: "/staff", label: "Staff", icon: UserCog, testid: "nav-staff" },
+const allNav = [
+  { to: "/", label: "Dashboard", icon: LayoutDashboard, testid: "nav-dashboard", roles: ["admin", "manager", "sales", "staff"] },
+  { to: "/bookings", label: "Bookings", icon: Package, testid: "nav-bookings", roles: ["admin", "manager", "sales", "staff"] },
+  { to: "/pipeline", label: "Pipeline", icon: Sparkles, testid: "nav-pipeline", roles: ["admin", "manager", "sales"] },
+  { to: "/packages", label: "Packages", icon: Package, testid: "nav-packages", roles: ["admin", "manager", "sales"] },
+  { to: "/payments", label: "Payments", icon: Wallet, testid: "nav-payments", roles: ["admin", "manager"] },
+  { to: "/expenses", label: "Expenses", icon: Receipt, testid: "nav-expenses", roles: ["admin", "manager"] },
+  { to: "/vendors", label: "Vendors", icon: Users, testid: "nav-vendors", roles: ["admin", "manager"] },
+  { to: "/staff", label: "Staff", icon: UserCog, testid: "nav-staff", roles: ["admin", "manager"] },
+  { to: "/users", label: "Users", icon: Shield, testid: "nav-users", roles: ["admin"] },
 ];
-
-const mobileNavItems = navItems.slice(0, 5);
 
 export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const navItems = allNav.filter((n) => n.roles.includes(user?.role || "staff"));
+  const mobileNavItems = navItems.slice(0, 5);
 
   const handleLogout = () => {
     logout();

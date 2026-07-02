@@ -9,6 +9,7 @@ import logging
 import uuid
 import bcrypt
 import jwt
+import razorpay
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Any
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File
@@ -29,6 +30,18 @@ security = HTTPBearer(auto_error=False)
 
 JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALGO = "HS256"
+
+RZP_KEY = os.environ.get('RAZORPAY_KEY_ID', '')
+RZP_SECRET = os.environ.get('RAZORPAY_KEY_SECRET', '')
+rzp_client = razorpay.Client(auth=(RZP_KEY, RZP_SECRET)) if RZP_KEY and RZP_SECRET else None
+
+
+def require_roles(*allowed):
+    async def checker(user: dict = Depends(get_current_user)):
+        if user.get("role") not in allowed:
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        return user
+    return checker
 
 
 # ---------- Helpers ----------
@@ -464,6 +477,116 @@ async def update_lead_stage(lid: str, data: StageUpdate, user: dict = Depends(ge
     await db.leads.update_one({"id": lid}, {"$set": {"stage": data.stage}})
     doc = await db.leads.find_one({"id": lid}, {"_id": 0})
     return doc
+
+
+# ---------- Users (admin only) ----------
+@api_router.get("/users")
+async def list_users(user: dict = Depends(require_roles("admin"))):
+    return await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(500)
+
+
+class UserCreateIn(BaseModel):
+    email: EmailStr
+    password: str
+    name: str
+    role: str = "staff"
+
+
+@api_router.post("/users")
+async def create_user(data: UserCreateIn, user: dict = Depends(require_roles("admin"))):
+    email = data.email.lower()
+    if data.role not in ("admin", "manager", "sales", "staff"):
+        raise HTTPException(status_code=400, detail="Invalid role")
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email exists")
+    doc = {"id": str(uuid.uuid4()), "email": email, "password_hash": hash_password(data.password),
+           "name": data.name, "role": data.role, "created_at": now_iso()}
+    await db.users.insert_one(doc)
+    return {"id": doc["id"], "email": email, "name": data.name, "role": data.role}
+
+
+class UserUpdateIn(BaseModel):
+    name: Optional[str] = None
+    role: Optional[str] = None
+    password: Optional[str] = None
+
+
+@api_router.put("/users/{uid}")
+async def update_user(uid: str, data: UserUpdateIn, user: dict = Depends(require_roles("admin"))):
+    upd = {}
+    if data.name: upd["name"] = data.name
+    if data.role:
+        if data.role not in ("admin", "manager", "sales", "staff"):
+            raise HTTPException(status_code=400, detail="Invalid role")
+        upd["role"] = data.role
+    if data.password: upd["password_hash"] = hash_password(data.password)
+    if upd:
+        await db.users.update_one({"id": uid}, {"$set": upd})
+    return {"ok": True}
+
+
+@api_router.delete("/users/{uid}")
+async def delete_user(uid: str, user: dict = Depends(require_roles("admin"))):
+    if uid == user["id"]:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    await db.users.delete_one({"id": uid})
+    return {"ok": True}
+
+
+# ---------- Razorpay ----------
+@api_router.post("/payments/create-link/{booking_id}")
+async def create_payment_link(booking_id: str, user: dict = Depends(get_current_user)):
+    if not rzp_client:
+        raise HTTPException(status_code=500, detail="Razorpay not configured")
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    balance = float(b.get("total_amount", 0)) - float(b.get("advance_paid", 0))
+    if balance <= 0:
+        raise HTTPException(status_code=400, detail="No balance due")
+    try:
+        link = rzp_client.payment_link.create({
+            "amount": int(balance * 100),
+            "currency": "INR",
+            "accept_partial": True,
+            "description": f"RCB Events booking {b.get('booking_number')}",
+            "customer": {"name": b.get("customer_name", ""), "contact": b.get("mobile", "")},
+            "notify": {"sms": True, "email": False},
+            "reminder_enable": True,
+            "notes": {"booking_id": booking_id, "booking_number": b.get("booking_number", "")},
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Razorpay error: {e}")
+    await db.bookings.update_one({"id": booking_id}, {"$set": {
+        "payment_link_id": link.get("id"), "payment_link_url": link.get("short_url"),
+        "payment_link_status": link.get("status", "created"), "updated_at": now_iso()}})
+    return {"url": link.get("short_url"), "id": link.get("id"), "status": link.get("status")}
+
+
+class RzpWebhook(BaseModel):
+    payload: dict
+    event: str
+
+
+@api_router.post("/payments/webhook")
+async def rzp_webhook(request: Request):
+    body = await request.json()
+    ev = body.get("event", "")
+    if ev in ("payment_link.paid", "payment.captured"):
+        pl = body.get("payload", {}).get("payment_link", {}).get("entity", {}) \
+             or body.get("payload", {}).get("payment", {}).get("entity", {})
+        booking_id = (pl.get("notes") or {}).get("booking_id")
+        amount = float(pl.get("amount", 0)) / 100
+        if booking_id and amount > 0:
+            b = await db.bookings.find_one({"id": booking_id})
+            if b:
+                new_adv = float(b.get("advance_paid", 0)) + amount
+                await db.bookings.update_one({"id": booking_id}, {"$set": {
+                    "advance_paid": new_adv, "payment_link_status": "paid", "updated_at": now_iso()}})
+                await db.payments.insert_one({"id": str(uuid.uuid4()), "booking_id": booking_id,
+                    "amount": amount, "method": "Razorpay", "note": "Auto via webhook",
+                    "created_at": now_iso()})
+    return {"ok": True}
 
 
 # ---------- Health ----------
