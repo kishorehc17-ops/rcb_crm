@@ -132,6 +132,22 @@ export default function Bookings() {
     window.open(`https://wa.me/${num}?text=${msg}`, "_blank");
   };
 
+  const sendPaymentLink = async (b) => {
+    try {
+      const res = await api.post(`/payments/create-link/${b.id}`);
+      const url = res.data.url;
+      toast.success("Payment link created");
+      const balance = Number(b.total_amount) - Number(b.advance_paid);
+      const msg = encodeURIComponent(`Hi ${b.customer_name}, please pay ₹${balance} for booking ${b.booking_number}: ${url}`);
+      const num = b.mobile.replace(/\D/g, "");
+      window.open(`https://wa.me/${num}?text=${msg}`, "_blank");
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed to create payment link");
+    }
+  };
+
+
   return (
     <div className="space-y-6" data-testid="bookings-page">
       <div className="flex flex-wrap items-end justify-between gap-4">

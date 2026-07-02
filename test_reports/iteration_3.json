@@ -1,0 +1,18 @@
+{
+  "summary": "Retested the HIGH priority fix for sendPaymentLink in Bookings.jsx. The function is now defined (lines 135-148) and works end-to-end: clicking ₹ button posts to /api/payments/create-link/{id} (200), shows 'Payment link created' toast, and opens a new tab to a wa.me URL containing the Razorpay rzp.io short URL. No runtime errors, no console errors.",
+  "tested_scope": ["frontend", "integration"],
+  "passed": [
+    "Admin login (admin@rcbevents.com/admin123) succeeds",
+    "/bookings page renders with pay-link buttons (data-testid=pay-link-<id>)",
+    "Clicking ₹ button on booking with balance triggers POST /api/payments/create-link/{id} → 200",
+    "'Payment link created' toast appears (verified in DOM and screenshot)",
+    "New tab opens to https://api.whatsapp.com/send/?phone=<mobile>&text=... containing rzp.io/rzp/... payment link",
+    "No 'sendPaymentLink is not defined' runtime error (pageerror listener empty)",
+    "No console errors, no webpack error overlay"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "n/a (not tested this iteration)", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true
+}
