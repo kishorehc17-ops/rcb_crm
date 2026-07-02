@@ -1,0 +1,168 @@
+{
+  "project_name": "RCB Events CRM",
+  "domain": "CRM, Event Management, B2B SaaS",
+  "theme_archetype": {
+    "name": "Archetype 4 (Swiss & High-Contrast) + Vibrancy",
+    "theme": "LIGHT",
+    "rationale": "The user explicitly requested Primary Red, Secondary Black, and White Background with a fast, professional UI. We merge the high-contrast authority of Archetype 4 with the energetic warmth needed for an event/birthday celebration company. It avoids the cold 'tech-bro' blue and uses bold, crisp contrasts."
+  },
+  "typography": {
+    "rules": {
+      "headings": {
+        "family": "Outfit, sans-serif",
+        "weight": "font-bold to font-black",
+        "tracking": "tracking-tight",
+        "rationale": "Outfit brings a modern, geometric, yet friendly feel that suits celebration events while remaining highly professional for a CRM."
+      },
+      "body": {
+        "family": "DM Sans, sans-serif",
+        "weight": "font-normal to font-medium",
+        "tracking": "tracking-normal"
+      },
+      "hierarchy": {
+        "h1": "text-4xl sm:text-5xl font-extrabold tracking-tighter text-black",
+        "h2": "text-2xl sm:text-3xl font-bold tracking-tight text-black",
+        "h3": "text-xl sm:text-2xl font-bold tracking-tight text-black",
+        "h4": "text-lg sm:text-xl font-semibold text-black",
+        "body": "text-base text-black/80",
+        "small": "text-sm text-black/60",
+        "overline": "text-xs font-bold uppercase tracking-[0.2em] text-red-600"
+      }
+    }
+  },
+  "colors": {
+    "primary": {
+      "DEFAULT": "#E63946",
+      "hover": "#D90429",
+      "light": "#FFE5E8",
+      "description": "Vibrant, energetic red for primary actions, badges, and highlights."
+    },
+    "secondary": {
+      "DEFAULT": "#0A0A0A",
+      "hover": "#1F1F1F",
+      "description": "Pitch black for high-contrast secondary buttons, text, and deep accents."
+    },
+    "background": {
+      "base": "#FFFFFF",
+      "surface": "#F8F9FA",
+      "surface_alt": "#F1F3F5"
+    },
+    "status": {
+      "available": "#2DC653",
+      "booked": "#EF233C",
+      "pending": "#FFB703",
+      "completed": "#2DC653",
+      "in_progress": "#4361EE"
+    },
+    "borders": {
+      "subtle": "border-black/5",
+      "medium": "border-black/10",
+      "focus": "ring-red-500"
+    },
+    "text": {
+      "primary": "#0A0A0A",
+      "secondary": "#495057",
+      "muted": "#868E96",
+      "inverse": "#FFFFFF"
+    }
+  },
+  "spacing_and_layout": {
+    "philosophy": "Generous spacing. The bento grid style is used for the dashboard to keep data dense but breathable.",
+    "containers": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+    "dashboard_grid": "grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6",
+    "card_padding": "p-6 sm:p-8",
+    "radii": {
+      "cards": "rounded-2xl sm:rounded-3xl",
+      "buttons": "rounded-full",
+      "inputs": "rounded-xl"
+    },
+    "navigation": {
+      "desktop": "sidebar layout (fixed left, w-64, bg-white border-r border-black/5)",
+      "mobile": "bottom tab navigation (fixed bottom, h-16, bg-white/90 backdrop-blur-xl border-t border-black/5 z-50)"
+    }
+  },
+  "components": {
+    "cards": {
+      "base": "bg-white border border-black/5 rounded-3xl shadow-sm transition-all duration-300",
+      "hover": "hover:shadow-lg hover:shadow-red-500/5 hover:-translate-y-1"
+    },
+    "buttons": {
+      "primary": "bg-[#E63946] text-white hover:bg-[#D90429] rounded-full px-6 py-3 font-semibold transition-all duration-200 active:scale-95 shadow-md shadow-red-500/20",
+      "secondary": "bg-[#0A0A0A] text-white hover:bg-[#1F1F1F] rounded-full px-6 py-3 font-semibold transition-all duration-200 active:scale-95",
+      "outline": "bg-transparent border-2 border-black/10 text-black hover:border-black rounded-full px-6 py-3 font-semibold transition-all duration-200",
+      "touch_friendly": "min-h-[48px] min-w-[48px] flex items-center justify-center"
+    },
+    "inputs": {
+      "base": "w-full bg-white border border-black/10 rounded-xl px-4 py-3 text-black placeholder-black/40 focus:outline-none focus:ring-2 focus:ring-[#E63946] focus:border-transparent transition-all duration-200"
+    },
+    "kanban": {
+      "column": "bg-[#F8F9FA] rounded-2xl p-4 flex flex-col gap-4 min-h-[500px]",
+      "item": "bg-white border border-black/5 rounded-xl p-4 shadow-sm cursor-grab active:cursor-grabbing hover:border-red-500/30 transition-colors"
+    },
+    "calendar": {
+      "day_booked": "bg-[#FFE5E8] text-[#E63946] border border-[#E63946]/20 font-bold",
+      "day_available": "bg-[#EBFBEE] text-[#2DC653] border border-[#2DC653]/20"
+    }
+  },
+  "animations": {
+    "micro_interactions": "Smooth transforms on hover (-translate-y-1) for cards. Scale down (active:scale-95) for buttons to feel tactile.",
+    "page_transitions": "Framer Motion: initial { opacity: 0, y: 10 } animate { opacity: 1, y: 0 } transition { duration: 0.3 }",
+    "lists": "Staggered entrance animations for kanban boards and table rows."
+  },
+  "icons": {
+    "library": "lucide-react",
+    "stroke_width": 2,
+    "size": {
+      "small": 16,
+      "base": 20,
+      "large": 24,
+      "xl": 32
+    }
+  },
+  "testing": {
+    "rule": "All interactive elements MUST include data-testid attributes (e.g., data-testid='login-submit-button')."
+  },
+  "media_urls": {
+    "logo_placeholder": [
+      {
+        "url": "https://images.pexels.com/photos/19503589/pexels-photo-19503589.jpeg",
+        "description": "Abstract red shape to be used as a stylized brand header or placeholder background for the logo."
+      }
+    ],
+    "avatars": [
+      {
+        "url": "https://images.pexels.com/photos/12311567/pexels-photo-12311567.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Smiling professional headshot for staff/user avatars."
+      },
+      {
+        "url": "https://images.pexels.com/photos/12311572/pexels-photo-12311572.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Smiling professional headshot for staff/user avatars."
+      }
+    ],
+    "event_inspiration": [
+      {
+        "url": "https://images.pexels.com/photos/9955060/pexels-photo-9955060.png",
+        "description": "Red balloon decoration. Use for empty states, login screen backgrounds, or package visual banners."
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1571534505926-fd4c6feb47cc",
+        "description": "Red and black balloons. Fits the branding perfectly for decorative background elements."
+      },
+      {
+        "url": "https://images.pexels.com/photos/7600328/pexels-photo-7600328.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Birthday party decoration setup. Use as a placeholder for completed bookings or package visuals."
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the color palette: Primary Red (#E63946) and Secondary Black (#0A0A0A). Do NOT default to Tailwind's blue or slate.",
+    "Use 'Outfit' font for headings and 'DM Sans' for body. If using Google Fonts, import them via CSS.",
+    "Ensure all cards use 'rounded-2xl' or 'rounded-3xl' for the requested soft touch, combined with crisp 1px borders (border-black/5).",
+    "Implement the mobile layout with a fixed bottom navigation bar containing icons for Dashboard, Bookings, Calendar, and Profile.",
+    "For the Kanban pipeline, use a soft background for the columns (#F8F9FA) and crisp white cards inside.",
+    "Calendar should highlight booked dates in red and available dates in green as specified.",
+    "Use Framer Motion for smooth entrances and state transitions.",
+    "Ensure buttons are large and touch-friendly (min 48px height/width).",
+    "MUST include data-testid attributes on every interactive element."
+  ]
+}
