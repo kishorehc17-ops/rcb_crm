@@ -243,9 +243,8 @@ export default function Bookings() {
                 <td className="px-6 py-4">
                   <div className="flex items-center justify-end gap-1">
                     <button onClick={() => setViewing(b)} data-testid={`view-${b.id}`} title="View" className="p-2 rounded-lg hover:bg-black/5"><Eye size={16} /></button>
-                    <button onClick={() => sendPaymentLink(b)} data-testid={`pay-link-${b.id}`} title="Send Payment Link" className="p-2 rounded-lg hover:bg-yellow-50 text-yellow-700">₹</button>
-                    <button onClick={() => wa(b.mobile, b.customer_name)} data-testid={`wa-${b.id}`} title="WhatsApp" className="p-2 rounded-lg hover:bg-green-50 text-green-600"><MessageCircle size={16} /></button>
                     <button onClick={() => sendPaymentLink(b)} data-testid={`pay-link-${b.id}`} title="Send Payment Link" className="p-2 rounded-lg hover:bg-yellow-50 text-yellow-700 font-bold text-sm w-8 h-8 flex items-center justify-center">₹</button>
+                    <button onClick={() => wa(b.mobile, b.customer_name)} data-testid={`wa-${b.id}`} title="WhatsApp" className="p-2 rounded-lg hover:bg-green-50 text-green-600"><MessageCircle size={16} /></button>
                     <button onClick={() => navigate(`/invoice/${b.id}`)} data-testid={`invoice-${b.id}`} title="Invoice" className="p-2 rounded-lg hover:bg-black/5"><FileText size={16} /></button>
                     <button onClick={() => edit(b)} data-testid={`edit-${b.id}`} title="Edit" className="p-2 rounded-lg hover:bg-black/5"><Edit3 size={16} /></button>
                     <button onClick={() => del(b.id)} data-testid={`delete-${b.id}`} title="Delete" className="p-2 rounded-lg hover:bg-red-50 text-[#E63946]"><Trash2 size={16} /></button>

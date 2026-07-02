@@ -1,0 +1,31 @@
+{
+  "summary": "Verified bug fix (duplicate ₹ button removed) and role-based access control + user management. Backend endpoints all pass (payments, users, RBAC). Frontend Users page renders. However, the ₹ button in Bookings triggers a runtime error because the sendPaymentLink function is not defined in Bookings.jsx — the Razorpay payment link cannot be initiated from the UI.",
+  "tested_scope": ["backend", "frontend", "auth", "integration"],
+  "passed": [
+    "Admin login (admin@rcbevents.com/admin123) works; sidebar shows all 9 nav items including 'Users'",
+    "Bookings row actions column has exactly ONE ₹ button per row with correct order: view → pay-link → wa → invoice → edit → delete (duplicate fix confirmed)",
+    "POST /api/payments/create-link/{booking_id} with positive balance returns Razorpay short_url (rzp.io/rzp/...) and status 200; payment_link_id/url/status persisted to booking",
+    "POST /api/payments/create-link/{booking_id} with zero balance returns 400 'No balance due'",
+    "POST /api/users creates user with valid role (sales) → 200",
+    "POST /api/users with duplicate email → 400 'Email exists'",
+    "POST /api/users with invalid role (superuser) → 400 'Invalid role'",
+    "GET /api/users as non-admin (sales user) → 403 'Insufficient permissions'",
+    "DELETE /api/users/{self_id} → 400 'Cannot delete yourself'",
+    "DELETE /api/users/{other_id} as admin → 200",
+    "/users page renders User Management UI with existing admin row + Add User button"
+  ],
+  "failed": [
+    {
+      "area": "frontend / Bookings.jsx",
+      "issue": "Clicking the ₹ (Send Payment Link) button throws 'ReferenceError: sendPaymentLink is not defined'. The onClick calls sendPaymentLink(b) at line 246 but no such function is declared, imported, or defined anywhere in /app/frontend/src/pages/Bookings.jsx (grep confirms only one reference — the onClick). This blocks the entire Razorpay payment-link UI flow (no toast, no wa.me popup, no persisted payment_link_url via UI).",
+      "evidence": "Runtime overlay: 'Uncaught runtime errors: ERROR sendPaymentLink is not defined at onClick (bundle.js:2794:34)'. grep -n 'sendPaymentLink' Bookings.jsx returns only line 246.",
+      "priority": "HIGH"
+    }
+  ],
+  "action_items": [
+    "Define/implement the sendPaymentLink(booking) function in /app/frontend/src/pages/Bookings.jsx: it should POST to `${API}/payments/create-link/${booking.id}`, on success show a 'Payment link created' toast and open a new tab to https://wa.me/91<mobile>?text=<encoded message with link.url>, on error show the API error message ('No balance due' etc.)."
+  ],
+  "success_rate": {"backend": "100%", "frontend": "~85% (Users page + button layout OK; Razorpay UI flow broken)"},
+  "retest_needed": true,
+  "full_testing_deferred": true
+}
