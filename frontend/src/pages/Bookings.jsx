@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import api from "@/api";
 import { toast } from "sonner";
-import { Trash2, Edit3, MessageCircle, FileText, X, Plus, Search } from "lucide-react";
+import { Trash2, Edit3, MessageCircle, FileText, X, Plus, Search, Eye } from "lucide-react";
 
 const STATUSES = ["Inquiry", "Pending", "Confirmed", "In Progress", "Completed", "Cancelled"];
 
@@ -28,6 +28,7 @@ export default function Bookings() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
+  const [viewing, setViewing] = useState(null);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("All");
   const [params] = useSearchParams();
@@ -185,6 +186,7 @@ export default function Bookings() {
                 </td>
                 <td className="px-6 py-4">
                   <div className="flex items-center justify-end gap-1">
+                    <button onClick={() => setViewing(b)} data-testid={`view-${b.id}`} title="View" className="p-2 rounded-lg hover:bg-black/5"><Eye size={16} /></button>
                     <button onClick={() => wa(b.mobile, b.customer_name)} data-testid={`wa-${b.id}`} title="WhatsApp" className="p-2 rounded-lg hover:bg-green-50 text-green-600"><MessageCircle size={16} /></button>
                     <button onClick={() => navigate(`/invoice/${b.id}`)} data-testid={`invoice-${b.id}`} title="Invoice" className="p-2 rounded-lg hover:bg-black/5"><FileText size={16} /></button>
                     <button onClick={() => edit(b)} data-testid={`edit-${b.id}`} title="Edit" className="p-2 rounded-lg hover:bg-black/5"><Edit3 size={16} /></button>
@@ -212,6 +214,7 @@ export default function Bookings() {
             <p className="text-sm text-black/70">{b.theme} · {b.event_date}</p>
             <p className="text-sm font-bold text-black mt-1">₹{Number(b.total_amount).toLocaleString("en-IN")}</p>
             <div className="flex gap-2 mt-3">
+              <button onClick={() => setViewing(b)} data-testid={`m-view-${b.id}`} className="flex-1 bg-black text-white rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><Eye size={14} /> View</button>
               <button onClick={() => wa(b.mobile, b.customer_name)} className="flex-1 bg-green-50 text-green-700 rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><MessageCircle size={14} /> WhatsApp</button>
               <button onClick={() => edit(b)} className="flex-1 bg-black/5 rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><Edit3 size={14} /> Edit</button>
               <button onClick={() => del(b.id)} className="bg-red-50 text-[#E63946] rounded-full px-3 py-2"><Trash2 size={14} /></button>
@@ -307,9 +310,66 @@ export default function Bookings() {
           </div>
         </div>
       )}
+
+      {/* View details modal */}
+      {viewing && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4" data-testid="view-modal">
+          <div className="bg-white w-full max-w-2xl rounded-t-3xl sm:rounded-3xl p-6 max-h-[92vh] overflow-y-auto">
+            <div className="flex justify-between items-start mb-4 pb-4 border-b border-black/5">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#E63946] mb-1">Booking Details</p>
+                <h2 className="font-display text-2xl font-bold tracking-tight text-black">{viewing.customer_name}</h2>
+                <p className="text-xs font-mono text-black/50 mt-1">{viewing.booking_number}</p>
+              </div>
+              <button data-testid="close-view" onClick={() => setViewing(null)} className="p-2 rounded-full hover:bg-black/5"><X size={20} /></button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              <Info label="Status">
+                <span className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full inline-block ${statusColor(viewing.status)}`}>{viewing.status}</span>
+              </Info>
+              <Info label="Mobile">{viewing.mobile}</Info>
+              <Info label="Event Date">{viewing.event_date}</Info>
+              <Info label="Event Time">{viewing.event_time}</Info>
+              <Info label="Location" full>{viewing.location || "—"}</Info>
+              <Info label="Theme">{viewing.theme || "—"}</Info>
+              <Info label="Package">{viewing.package_name || "—"}</Info>
+              <Info label="Total Amount">₹{Number(viewing.total_amount).toLocaleString("en-IN")}</Info>
+              <Info label="Advance Paid">₹{Number(viewing.advance_paid).toLocaleString("en-IN")}</Info>
+              <Info label="Balance" full>
+                <span className="text-[#E63946] font-bold">₹{(Number(viewing.total_amount) - Number(viewing.advance_paid)).toLocaleString("en-IN")}</span>
+              </Info>
+              {viewing.selected_addons && viewing.selected_addons.length > 0 && (
+                <Info label="Add-ons" full>
+                  <div className="flex flex-wrap gap-1.5 mt-1">
+                    {viewing.selected_addons.map((a) => (
+                      <span key={a} className="px-2.5 py-1 rounded-full bg-[#FFE5E8] text-[#E63946] text-xs font-semibold">{a}</span>
+                    ))}
+                  </div>
+                </Info>
+              )}
+              {viewing.special_requirements && <Info label="Special Requirements" full>{viewing.special_requirements}</Info>}
+              <Info label="Created" full>{new Date(viewing.created_at).toLocaleString()}</Info>
+            </div>
+
+            <div className="flex flex-wrap gap-2 justify-end pt-4 border-t border-black/5">
+              <button data-testid="view-wa-btn" onClick={() => wa(viewing.mobile, viewing.customer_name)} className="px-4 py-2 rounded-full bg-green-50 text-green-700 font-semibold text-sm flex items-center gap-2"><MessageCircle size={14} /> WhatsApp</button>
+              <button data-testid="view-invoice-btn" onClick={() => navigate(`/invoice/${viewing.id}`)} className="px-4 py-2 rounded-full bg-black/5 text-black font-semibold text-sm flex items-center gap-2"><FileText size={14} /> Invoice</button>
+              <button data-testid="view-edit-btn" onClick={() => { edit(viewing); setViewing(null); }} className="px-4 py-2 rounded-full bg-black text-white font-semibold text-sm flex items-center gap-2"><Edit3 size={14} /> Edit</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+const Info = ({ label, children, full }) => (
+  <div className={full ? "col-span-2" : ""}>
+    <p className="text-[10px] font-bold uppercase tracking-widest text-black/50 mb-1">{label}</p>
+    <div className="text-sm text-black">{children}</div>
+  </div>
+);
 
 const inputCls = "w-full bg-white border border-black/10 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-[#E63946] focus:border-transparent transition-all";
 
