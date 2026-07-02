@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import api from "@/api";
 import { toast } from "sonner";
-import { Trash2, Edit3, MessageCircle, FileText, X, Plus, Search, Eye } from "lucide-react";
+import { Trash2, Edit3, MessageCircle, FileText, X, Plus, Search, Eye, Upload } from "lucide-react";
 
 const STATUSES = ["Inquiry", "Pending", "Confirmed", "In Progress", "Completed", "Cancelled"];
 
@@ -29,6 +29,31 @@ export default function Bookings() {
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
   const [viewing, setViewing] = useState(null);
+  const [uploading, setUploading] = useState(false);
+
+  const BACKEND = process.env.REACT_APP_BACKEND_URL;
+  const photoUrl = (p) => (p && p.startsWith("http") ? p : p ? `${BACKEND}${p}` : "");
+
+  const handleUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image must be under 5MB");
+      return;
+    }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await api.post("/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setForm((f) => ({ ...f, theme_photo: res.data.url }));
+      toast.success("Photo uploaded");
+    } catch (err) {
+      toast.error("Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  };
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("All");
   const [params] = useSearchParams();
@@ -182,7 +207,7 @@ export default function Bookings() {
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-2.5">
                     {b.theme_photo ? (
-                      <img src={b.theme_photo} alt={b.theme} className="w-10 h-10 rounded-xl object-cover border border-black/10 flex-shrink-0" onError={(e) => { e.target.style.display = 'none'; }} />
+                      <img src={photoUrl(b.theme_photo)} alt={b.theme} className="w-10 h-10 rounded-xl object-cover border border-black/10 flex-shrink-0" onError={(e) => { e.target.style.display = 'none'; }} />
                     ) : (
                       <div className="w-10 h-10 rounded-xl bg-[#FFE5E8] flex items-center justify-center flex-shrink-0 text-[#E63946] font-bold text-sm">
                         {(b.theme || "?")[0].toUpperCase()}
@@ -244,7 +269,7 @@ export default function Bookings() {
             </div>
             <div className="flex items-center gap-3 mb-3">
               {b.theme_photo ? (
-                <img src={b.theme_photo} alt={b.theme} className="w-14 h-14 rounded-xl object-cover border border-black/10 flex-shrink-0" onError={(e) => { e.target.style.display = 'none'; }} />
+                <img src={photoUrl(b.theme_photo)} alt={b.theme} className="w-14 h-14 rounded-xl object-cover border border-black/10 flex-shrink-0" onError={(e) => { e.target.style.display = 'none'; }} />
               ) : (
                 <div className="w-14 h-14 rounded-xl bg-[#FFE5E8] flex items-center justify-center flex-shrink-0 text-[#E63946] font-bold text-lg">
                   {(b.theme || "?")[0].toUpperCase()}
@@ -307,8 +332,22 @@ export default function Bookings() {
               <Field label="Theme">
                 <input data-testid="form-theme" value={form.theme} onChange={(e) => setForm({...form, theme: e.target.value})} className={inputCls} placeholder="e.g. Spiderman, Unicorn" />
               </Field>
-              <Field label="Theme Photo URL">
-                <input data-testid="form-theme-photo" value={form.theme_photo} onChange={(e) => setForm({...form, theme_photo: e.target.value})} className={inputCls} placeholder="https://... (optional image link)" />
+              <Field label="Theme Photo / Reference Image">
+                <div className="flex items-center gap-3">
+                  {form.theme_photo && (
+                    <img src={photoUrl(form.theme_photo)} alt="preview" className="w-14 h-14 rounded-xl object-cover border border-black/10" />
+                  )}
+                  <label className={`flex-1 cursor-pointer flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border-2 border-dashed border-black/15 hover:border-[#E63946] hover:bg-red-50/40 transition-all font-semibold text-sm ${uploading ? "opacity-60 pointer-events-none" : ""}`}>
+                    <Upload size={16} />
+                    {uploading ? "Uploading..." : form.theme_photo ? "Replace photo" : "Upload photo"}
+                    <input data-testid="form-theme-photo-file" type="file" accept="image/*" onChange={handleUpload} className="hidden" />
+                  </label>
+                  {form.theme_photo && (
+                    <button type="button" onClick={() => setForm({...form, theme_photo: ""})} className="p-2 rounded-lg text-[#E63946] hover:bg-red-50" title="Remove">
+                      <X size={16} />
+                    </button>
+                  )}
+                </div>
               </Field>
               <Field label="Package">
                 <select data-testid="form-package" value={form.package_id} onChange={(e) => {

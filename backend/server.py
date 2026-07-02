@@ -11,7 +11,8 @@ import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Any
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -471,8 +472,28 @@ async def root():
     return {"message": "RCB Events CRM API", "status": "ok"}
 
 
+# ---------- File Upload ----------
+UPLOAD_DIR = ROOT_DIR / "uploads"
+UPLOAD_DIR.mkdir(exist_ok=True)
+
+
+@api_router.post("/upload")
+async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    ext = os.path.splitext(file.filename or "img.jpg")[1].lower() or ".jpg"
+    if ext not in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
+        raise HTTPException(status_code=400, detail="Only image files are allowed")
+    filename = f"{uuid.uuid4().hex}{ext}"
+    dest = UPLOAD_DIR / filename
+    contents = await file.read()
+    dest.write_bytes(contents)
+    return {"url": f"/api/uploads/{filename}"}
+
+
 # ---------- Include router ----------
 app.include_router(api_router)
+
+# Serve uploaded files (mounted under /api so kubernetes ingress routes to backend)
+app.mount("/api/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 app.add_middleware(
     CORSMiddleware,
