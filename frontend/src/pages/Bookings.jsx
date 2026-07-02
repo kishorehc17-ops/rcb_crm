@@ -327,11 +327,14 @@ export default function Bookings() {
               </div>
             )}
             <p className="text-sm font-bold text-black">₹{Number(b.total_amount).toLocaleString("en-IN")}</p>
-            <div className="flex gap-2 mt-3">
-              <button onClick={() => setViewing(b)} data-testid={`m-view-${b.id}`} className="flex-1 bg-black text-white rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><Eye size={14} /> View</button>
-              <button onClick={() => wa(b.mobile, b.customer_name)} className="flex-1 bg-green-50 text-green-700 rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><MessageCircle size={14} /> WhatsApp</button>
-              <button onClick={() => edit(b)} className="flex-1 bg-black/5 rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><Edit3 size={14} /> Edit</button>
-              <button onClick={() => del(b.id)} className="bg-red-50 text-[#E63946] rounded-full px-3 py-2"><Trash2 size={14} /></button>
+            <div className="grid grid-cols-4 gap-1.5 mt-3">
+              <button onClick={() => setViewing(b)} data-testid={`m-view-${b.id}`} className="bg-black text-white rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><Eye size={14} /> View</button>
+              <button onClick={() => wa(b.mobile, b.customer_name)} className="bg-green-50 text-green-700 rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><MessageCircle size={14} /> WA</button>
+              <button onClick={() => sendPaymentLink(b)} data-testid={`m-pay-${b.id}`} className="bg-yellow-50 text-yellow-700 rounded-full py-2 text-xs font-bold flex items-center justify-center">₹ Pay</button>
+              <button onClick={() => syncPayment(b)} data-testid={`m-sync-${b.id}`} className="bg-blue-50 text-blue-600 rounded-full py-2 text-xs font-bold flex items-center justify-center">↻ Sync</button>
+              <button onClick={() => navigate(`/invoice/${b.id}`)} data-testid={`m-inv-${b.id}`} className="bg-black/5 rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><FileText size={14} /> Invoice</button>
+              <button onClick={() => edit(b)} className="bg-black/5 rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><Edit3 size={14} /> Edit</button>
+              <button onClick={() => del(b.id)} className="col-span-2 bg-red-50 text-[#E63946] rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><Trash2 size={14} /> Delete</button>
             </div>
           </div>
         ))}
@@ -340,7 +343,7 @@ export default function Bookings() {
       {/* Form modal */}
       {showForm && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-white w-full max-w-2xl rounded-t-3xl sm:rounded-3xl p-6 max-h-[92vh] overflow-y-auto">
+          <div className="bg-white w-full max-w-2xl rounded-t-3xl sm:rounded-3xl p-6 pb-24 sm:pb-6 max-h-[92vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-4">
               <h2 className="font-display text-2xl font-bold tracking-tight text-black">{editingId ? "Edit" : "New"} Booking</h2>
               <button data-testid="close-form" onClick={() => setShowForm(false)} className="p-2 rounded-full hover:bg-black/5"><X size={20} /></button>
@@ -445,7 +448,7 @@ export default function Bookings() {
       {/* View details modal */}
       {viewing && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4" data-testid="view-modal">
-          <div className="bg-white w-full max-w-2xl rounded-t-3xl sm:rounded-3xl p-6 max-h-[92vh] overflow-y-auto">
+          <div className="bg-white w-full max-w-2xl rounded-t-3xl sm:rounded-3xl p-6 pb-24 sm:pb-6 max-h-[92vh] overflow-y-auto" data-testid="view-modal-container">
             <div className="flex justify-between items-start mb-4 pb-4 border-b border-black/5">
               <div className="flex items-start gap-3">
                 {viewing.theme_photo && (
