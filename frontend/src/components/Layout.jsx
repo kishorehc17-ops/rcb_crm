@@ -1,13 +1,12 @@
 import React from "react";
 import { NavLink, useNavigate, Outlet } from "react-router-dom";
-import { LayoutDashboard, Calendar, Users, Package, Receipt, Wallet, UserCog, Sparkles, LogOut, Menu } from "lucide-react";
+import { LayoutDashboard, Users, Package, Receipt, Wallet, UserCog, Sparkles, LogOut } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { motion } from "framer-motion";
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, testid: "nav-dashboard" },
   { to: "/bookings", label: "Bookings", icon: Package, testid: "nav-bookings" },
-  { to: "/calendar", label: "Calendar", icon: Calendar, testid: "nav-calendar" },
   { to: "/pipeline", label: "Pipeline", icon: Sparkles, testid: "nav-pipeline" },
   { to: "/packages", label: "Packages", icon: Package, testid: "nav-packages" },
   { to: "/payments", label: "Payments", icon: Wallet, testid: "nav-payments" },

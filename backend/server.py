@@ -105,6 +105,7 @@ class BookingIn(BaseModel):
     theme: str
     package_id: Optional[str] = None
     package_name: Optional[str] = None
+    selected_addons: List[str] = []
     special_requirements: Optional[str] = ""
     status: str = "Inquiry"
     total_amount: float = 0
@@ -115,6 +116,7 @@ class PackageIn(BaseModel):
     name: str
     price: float
     decorations: List[str] = []
+    addons: List[str] = []
     max_addons: int = 0
     active: bool = True
 
@@ -508,14 +510,19 @@ async def on_startup():
 
     # Seed default packages
     if await db.packages.count_documents({}) == 0:
+        common_addons = ["Cake Table", "Photo Props", "LED Lights", "Fog Machine", "Confetti Cannon", "Bubble Machine", "Photobooth", "Name Board", "Character Cutout", "Return Gifts"]
         defaults = [
-            {"id": str(uuid.uuid4()), "name": "Standard", "price": 4999, "decorations": ["50 Balloons", "Basic Backdrop", "Welcome Board"], "max_addons": 2, "active": True, "created_at": now_iso()},
-            {"id": str(uuid.uuid4()), "name": "Gold", "price": 9999, "decorations": ["100 Balloons", "Themed Backdrop", "Welcome Board", "Foil Balloons"], "max_addons": 4, "active": True, "created_at": now_iso()},
-            {"id": str(uuid.uuid4()), "name": "Gold Plus", "price": 14999, "decorations": ["150 Balloons", "Premium Backdrop", "Welcome Board", "Foil Balloons", "LED Lights"], "max_addons": 6, "active": True, "created_at": now_iso()},
-            {"id": str(uuid.uuid4()), "name": "Diamond", "price": 24999, "decorations": ["250 Balloons", "Luxury Backdrop", "Welcome Board", "Foil Balloons", "LED Lights", "Photo Props", "Cake Table Setup"], "max_addons": 10, "active": True, "created_at": now_iso()},
+            {"id": str(uuid.uuid4()), "name": "Standard", "price": 4999, "decorations": ["50 Balloons", "Basic Backdrop", "Welcome Board"], "addons": common_addons, "max_addons": 2, "active": True, "created_at": now_iso()},
+            {"id": str(uuid.uuid4()), "name": "Gold", "price": 9999, "decorations": ["100 Balloons", "Themed Backdrop", "Welcome Board", "Foil Balloons"], "addons": common_addons, "max_addons": 4, "active": True, "created_at": now_iso()},
+            {"id": str(uuid.uuid4()), "name": "Gold Plus", "price": 14999, "decorations": ["150 Balloons", "Premium Backdrop", "Welcome Board", "Foil Balloons", "LED Lights"], "addons": common_addons, "max_addons": 6, "active": True, "created_at": now_iso()},
+            {"id": str(uuid.uuid4()), "name": "Diamond", "price": 24999, "decorations": ["250 Balloons", "Luxury Backdrop", "Welcome Board", "Foil Balloons", "LED Lights", "Photo Props", "Cake Table Setup"], "addons": common_addons, "max_addons": 10, "active": True, "created_at": now_iso()},
         ]
         await db.packages.insert_many(defaults)
         logger.info("Seeded default packages")
+
+
+    # Backfill addons on existing packages (safe no-op if already set)
+    await db.packages.update_many({"addons": {"$exists": False}}, {"$set": {"addons": ["Cake Table", "Photo Props", "LED Lights", "Fog Machine", "Confetti Cannon", "Bubble Machine", "Photobooth", "Name Board", "Character Cutout", "Return Gifts"]}})
 
 
 @app.on_event("shutdown")

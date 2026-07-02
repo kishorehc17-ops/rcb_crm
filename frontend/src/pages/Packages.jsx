@@ -3,7 +3,7 @@ import api from "@/api";
 import { toast } from "sonner";
 import { Plus, Edit3, Trash2, X, CheckCircle2 } from "lucide-react";
 
-const empty = { name: "", price: 0, decorations: [], max_addons: 0, active: true };
+const empty = { name: "", price: 0, decorations: [], addons: [], max_addons: 0, active: true };
 
 export default function Packages() {
   const [pkgs, setPkgs] = useState([]);
@@ -11,6 +11,7 @@ export default function Packages() {
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
   const [decoText, setDecoText] = useState("");
+  const [addonText, setAddonText] = useState("");
 
   const load = () => api.get("/packages").then((r) => setPkgs(r.data));
   useEffect(() => { load(); }, []);
@@ -18,7 +19,8 @@ export default function Packages() {
   const submit = async (e) => {
     e.preventDefault();
     const payload = { ...form, price: Number(form.price), max_addons: Number(form.max_addons),
-      decorations: decoText.split("\n").map((s) => s.trim()).filter(Boolean) };
+      decorations: decoText.split("\n").map((s) => s.trim()).filter(Boolean),
+      addons: addonText.split("\n").map((s) => s.trim()).filter(Boolean) };
     if (editingId) {
       await api.put(`/packages/${editingId}`, payload);
       toast.success("Package updated");
@@ -26,13 +28,14 @@ export default function Packages() {
       await api.post("/packages", payload);
       toast.success("Package created");
     }
-    setShow(false); setForm(empty); setEditingId(null); setDecoText("");
+    setShow(false); setForm(empty); setEditingId(null); setDecoText(""); setAddonText("");
     load();
   };
 
   const edit = (p) => {
     setForm({ ...p });
     setDecoText((p.decorations || []).join("\n"));
+    setAddonText((p.addons || []).join("\n"));
     setEditingId(p.id); setShow(true);
   };
 
@@ -108,10 +111,14 @@ export default function Packages() {
               </div>
               <div>
                 <label className="text-xs font-bold uppercase tracking-widest text-black/60 mb-1.5 block">Decorations (one per line)</label>
-                <textarea data-testid="pkg-deco" rows={5} value={decoText} onChange={(e) => setDecoText(e.target.value)} className="w-full border border-black/10 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-[#E63946] focus:outline-none" />
+                <textarea data-testid="pkg-deco" rows={4} value={decoText} onChange={(e) => setDecoText(e.target.value)} className="w-full border border-black/10 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-[#E63946] focus:outline-none" />
               </div>
               <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-black/60 mb-1.5 block">Max Add-ons</label>
+                <label className="text-xs font-bold uppercase tracking-widest text-black/60 mb-1.5 block">Available Add-ons (one per line)</label>
+                <textarea data-testid="pkg-addons-list" rows={4} value={addonText} onChange={(e) => setAddonText(e.target.value)} placeholder="Cake Table&#10;Photo Props&#10;LED Lights" className="w-full border border-black/10 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-[#E63946] focus:outline-none" />
+              </div>
+              <div>
+                <label className="text-xs font-bold uppercase tracking-widest text-black/60 mb-1.5 block">Max Add-ons customer can choose</label>
                 <input type="number" data-testid="pkg-addons" value={form.max_addons} onChange={(e) => setForm({...form, max_addons: e.target.value})} className="w-full border border-black/10 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-[#E63946] focus:outline-none" />
               </div>
               <label className="flex items-center gap-2 cursor-pointer">

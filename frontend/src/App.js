@@ -8,7 +8,6 @@ import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Bookings from "@/pages/Bookings";
-import CalendarPage from "@/pages/CalendarPage";
 import Packages from "@/pages/Packages";
 import Payments from "@/pages/Payments";
 import Expenses from "@/pages/Expenses";
@@ -34,7 +33,6 @@ function App() {
             >
               <Route path="/" element={<Dashboard />} />
               <Route path="/bookings" element={<Bookings />} />
-              <Route path="/calendar" element={<CalendarPage />} />
               <Route path="/packages" element={<Packages />} />
               <Route path="/payments" element={<Payments />} />
               <Route path="/expenses" element={<Expenses />} />

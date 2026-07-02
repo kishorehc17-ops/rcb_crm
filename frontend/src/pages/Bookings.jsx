@@ -18,6 +18,7 @@ const statusColor = (s) => ({
 const emptyForm = {
   customer_name: "", mobile: "", event_date: "", event_time: "18:00",
   location: "", theme: "", package_id: "", package_name: "",
+  selected_addons: [],
   special_requirements: "", status: "Inquiry", total_amount: 0, advance_paid: 0,
 };
 
@@ -46,7 +47,7 @@ export default function Bookings() {
   const submit = async (e) => {
     e.preventDefault();
     try {
-      const payload = { ...form, total_amount: Number(form.total_amount), advance_paid: Number(form.advance_paid) };
+      const payload = { ...form, selected_addons: form.selected_addons || [], total_amount: Number(form.total_amount), advance_paid: Number(form.advance_paid) };
       if (editingId) {
         await api.put(`/bookings/${editingId}`, payload);
         toast.success("Booking updated");
@@ -71,9 +72,25 @@ export default function Bookings() {
   };
 
   const edit = (b) => {
-    setForm({ ...b });
+    setForm({ ...b, selected_addons: b.selected_addons || [] });
     setEditingId(b.id);
     setShowForm(true);
+  };
+
+  const selectedPkg = packages.find((p) => p.id === form.package_id);
+  const addonLimit = selectedPkg?.max_addons || 0;
+  const availableAddons = selectedPkg?.addons || [];
+  const toggleAddon = (addon) => {
+    const cur = form.selected_addons || [];
+    if (cur.includes(addon)) {
+      setForm({ ...form, selected_addons: cur.filter((a) => a !== addon) });
+    } else {
+      if (cur.length >= addonLimit) {
+        toast.error(`You can select up to ${addonLimit} add-ons for this package`);
+        return;
+      }
+      setForm({ ...form, selected_addons: [...cur, addon] });
+    }
   };
 
   const filtered = rows.filter((b) => {
@@ -233,12 +250,39 @@ export default function Bookings() {
               <Field label="Package">
                 <select data-testid="form-package" value={form.package_id} onChange={(e) => {
                   const p = packages.find((pk) => pk.id === e.target.value);
-                  setForm({...form, package_id: e.target.value, package_name: p?.name || "", total_amount: p?.price || form.total_amount});
+                  setForm({...form, package_id: e.target.value, package_name: p?.name || "", selected_addons: [], total_amount: p?.price || form.total_amount});
                 }} className={inputCls}>
                   <option value="">Select package</option>
                   {packages.map((p) => <option key={p.id} value={p.id}>{p.name} — ₹{p.price}</option>)}
                 </select>
               </Field>
+              {selectedPkg && availableAddons.length > 0 && (
+                <Field label={`Add-ons (select up to ${addonLimit})`} className="sm:col-span-2">
+                  <div className="border border-black/10 rounded-xl p-3 bg-white" data-testid="form-addons">
+                    <div className="flex flex-wrap gap-2">
+                      {availableAddons.map((addon) => {
+                        const selected = (form.selected_addons || []).includes(addon);
+                        return (
+                          <button
+                            key={addon}
+                            type="button"
+                            data-testid={`addon-${addon.replace(/\s+/g, '-')}`}
+                            onClick={() => toggleAddon(addon)}
+                            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
+                              selected
+                                ? "bg-[#E63946] text-white shadow-md shadow-red-500/20"
+                                : "bg-black/5 text-black/70 hover:bg-black/10"
+                            }`}
+                          >
+                            {selected ? "✓ " : "+ "}{addon}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-xs text-black/50 mt-2">{(form.selected_addons || []).length} / {addonLimit} selected</p>
+                  </div>
+                </Field>
+              )}
               <Field label="Total Amount (₹)">
                 <input type="number" data-testid="form-total" value={form.total_amount} onChange={(e) => setForm({...form, total_amount: e.target.value})} className={inputCls} />
               </Field>

@@ -75,6 +75,12 @@ export default function Invoice() {
               <td className="px-4 py-4">
                 <p className="font-semibold text-black">{b.package_name || "Event Package"}</p>
                 <p className="text-sm text-black/60">{b.theme} theme decoration</p>
+                {b.selected_addons && b.selected_addons.length > 0 && (
+                  <div className="mt-2">
+                    <p className="text-xs font-bold uppercase tracking-widest text-[#E63946] mb-1">Add-ons</p>
+                    <p className="text-sm text-black/70">{b.selected_addons.join(" · ")}</p>
+                  </div>
+                )}
                 {b.special_requirements && <p className="text-xs text-black/50 mt-1">Note: {b.special_requirements}</p>}
               </td>
               <td className="px-4 py-4 text-right font-bold text-black">₹{Number(b.total_amount).toLocaleString("en-IN")}</td>
