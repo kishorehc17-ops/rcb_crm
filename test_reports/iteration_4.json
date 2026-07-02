@@ -1,0 +1,21 @@
+{
+  "summary": "Verified Razorpay sync endpoint + webhook improvements. Sync idempotency, sync 404, webhook signature verification, webhook parsing, and webhook idempotency all working. Frontend ↻ sync button visible and functional with toast.",
+  "tested_scope": ["backend", "frontend", "integration"],
+  "passed": [
+    "POST /api/payments/sync/{booking_id} on already-paid booking (8f55aca4) returned {status:'paid', amount_paid:9999, reconciled:0.0} - idempotent, no double-count",
+    "GET /api/bookings/8f55aca4 shows advance_paid=9999 unchanged after 2nd sync",
+    "GET /api/payments?booking_id=8f55aca4 shows exactly one Razorpay entry with note='Reconciled via sync' amount=9999",
+    "POST /api/payments/sync/{nonexistent_id} returns 404 with detail 'No payment link on this booking'",
+    "Signed webhook (HMAC-SHA256 with RAZORPAY_WEBHOOK_SECRET) for event 'payment_link.paid' with notes.booking_id updated booking f0fcbcf0 advance_paid from 7999 -> 8499 (+500)",
+    "Payment record inserted with rzp_payment_id=pay_TEST_WEBHOOK_001, method=Razorpay, note='Auto via webhook (payment_link.paid)'",
+    "Webhook idempotency: replaying same payload returned {ok:true, duplicate:true}; advance_paid stayed 8499",
+    "Bad X-Razorpay-Signature returns HTTP 400 'Invalid signature'",
+    "Frontend Bookings page: ↻ buttons render with data-testid=sync-pay-<booking_id> for both bookings with payment_link_id",
+    "Clicking ↻ triggers POST /api/payments/sync/<id> and shows toast 'Razorpay status: paid · amount paid: ₹9999'"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true
+}

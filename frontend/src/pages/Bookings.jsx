@@ -147,6 +147,20 @@ export default function Bookings() {
     }
   };
 
+  const syncPayment = async (b) => {
+    try {
+      const res = await api.post(`/payments/sync/${b.id}`);
+      if (res.data.reconciled > 0) {
+        toast.success(`Synced ₹${res.data.reconciled} from Razorpay`);
+      } else {
+        toast.info(`Razorpay status: ${res.data.status} · amount paid: ₹${res.data.amount_paid}`);
+      }
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Sync failed");
+    }
+  };
+
 
   return (
     <div className="space-y-6" data-testid="bookings-page">
@@ -260,6 +274,7 @@ export default function Bookings() {
                   <div className="flex items-center justify-end gap-1">
                     <button onClick={() => setViewing(b)} data-testid={`view-${b.id}`} title="View" className="p-2 rounded-lg hover:bg-black/5"><Eye size={16} /></button>
                     <button onClick={() => sendPaymentLink(b)} data-testid={`pay-link-${b.id}`} title="Send Payment Link" className="p-2 rounded-lg hover:bg-yellow-50 text-yellow-700 font-bold text-sm w-8 h-8 flex items-center justify-center">₹</button>
+                    <button onClick={() => syncPayment(b)} data-testid={`sync-pay-${b.id}`} title="Sync Payment from Razorpay" className="p-2 rounded-lg hover:bg-blue-50 text-blue-600 font-bold text-xs w-8 h-8 flex items-center justify-center">↻</button>
                     <button onClick={() => wa(b.mobile, b.customer_name)} data-testid={`wa-${b.id}`} title="WhatsApp" className="p-2 rounded-lg hover:bg-green-50 text-green-600"><MessageCircle size={16} /></button>
                     <button onClick={() => navigate(`/invoice/${b.id}`)} data-testid={`invoice-${b.id}`} title="Invoice" className="p-2 rounded-lg hover:bg-black/5"><FileText size={16} /></button>
                     <button onClick={() => edit(b)} data-testid={`edit-${b.id}`} title="Edit" className="p-2 rounded-lg hover:bg-black/5"><Edit3 size={16} /></button>

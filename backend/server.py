@@ -571,32 +571,92 @@ class RzpWebhook(BaseModel):
 @api_router.post("/payments/webhook")
 async def rzp_webhook(request: Request):
     import hmac, hashlib
+    import json as _json
     raw = await request.body()
     webhook_secret = os.environ.get("RAZORPAY_WEBHOOK_SECRET", "")
     signature = request.headers.get("x-razorpay-signature", "")
-    # Verify signature if secret is configured (skip in test mode to allow manual testing)
     if webhook_secret:
         expected = hmac.new(webhook_secret.encode(), raw, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expected, signature):
+            logger.warning("Webhook: invalid signature")
             raise HTTPException(status_code=400, detail="Invalid signature")
-    import json as _json
     body = _json.loads(raw or b"{}")
     ev = body.get("event", "")
-    if ev in ("payment_link.paid", "payment.captured"):
-        pl = body.get("payload", {}).get("payment_link", {}).get("entity", {}) \
-             or body.get("payload", {}).get("payment", {}).get("entity", {})
-        booking_id = (pl.get("notes") or {}).get("booking_id")
-        amount = float(pl.get("amount", 0)) / 100
-        if booking_id and amount > 0:
-            b = await db.bookings.find_one({"id": booking_id})
-            if b:
-                new_adv = float(b.get("advance_paid", 0)) + amount
-                await db.bookings.update_one({"id": booking_id}, {"$set": {
-                    "advance_paid": new_adv, "payment_link_status": "paid", "updated_at": now_iso()}})
-                await db.payments.insert_one({"id": str(uuid.uuid4()), "booking_id": booking_id,
-                    "amount": amount, "method": "Razorpay", "note": "Auto via webhook",
-                    "created_at": now_iso()})
+    logger.info(f"Webhook event: {ev}")
+
+    payload = body.get("payload", {}) or {}
+    pl_entity = (payload.get("payment_link") or {}).get("entity") or {}
+    pay_entity = (payload.get("payment") or {}).get("entity") or {}
+
+    booking_id = None
+    amount = 0.0
+    link_id = pl_entity.get("id") or pay_entity.get("payment_link_id")
+
+    # Prefer payment_link entity data (has notes and amount_paid)
+    if pl_entity:
+        booking_id = (pl_entity.get("notes") or {}).get("booking_id")
+        amount = float(pl_entity.get("amount_paid") or pl_entity.get("amount") or 0) / 100
+    if not amount and pay_entity:
+        amount = float(pay_entity.get("amount") or 0) / 100
+    if not booking_id:
+        booking_id = (pay_entity.get("notes") or {}).get("booking_id")
+    # Fallback: look up booking by stored payment_link_id
+    if not booking_id and link_id:
+        b = await db.bookings.find_one({"payment_link_id": link_id}, {"id": 1})
+        if b:
+            booking_id = b.get("id")
+
+    logger.info(f"Webhook parsed: booking_id={booking_id}, amount={amount}, link_id={link_id}")
+
+    if ev in ("payment_link.paid", "payment.captured") and booking_id and amount > 0:
+        b = await db.bookings.find_one({"id": booking_id})
+        if b:
+            # Idempotency: skip if we already recorded this exact razorpay payment id
+            rzp_pay_id = pay_entity.get("id")
+            if rzp_pay_id and await db.payments.find_one({"rzp_payment_id": rzp_pay_id}):
+                logger.info(f"Webhook: duplicate payment id {rzp_pay_id}, skipping")
+                return {"ok": True, "duplicate": True}
+            new_adv = float(b.get("advance_paid") or 0) + amount
+            await db.bookings.update_one({"id": booking_id}, {"$set": {
+                "advance_paid": new_adv, "payment_link_status": "paid",
+                "updated_at": now_iso()}})
+            await db.payments.insert_one({"id": str(uuid.uuid4()),
+                "booking_id": booking_id, "amount": amount, "method": "Razorpay",
+                "note": f"Auto via webhook ({ev})", "rzp_payment_id": rzp_pay_id,
+                "created_at": now_iso()})
+            logger.info(f"Webhook: booking {booking_id} advance updated to {new_adv}")
     return {"ok": True}
+
+
+@api_router.post("/payments/sync/{booking_id}")
+async def sync_payment(booking_id: str, user: dict = Depends(get_current_user)):
+    """Manually fetch Razorpay payment link status and reconcile advance_paid."""
+    if not rzp_client:
+        raise HTTPException(status_code=500, detail="Razorpay not configured")
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b or not b.get("payment_link_id"):
+        raise HTTPException(status_code=404, detail="No payment link on this booking")
+    try:
+        link = rzp_client.payment_link.fetch(b["payment_link_id"])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Razorpay error: {e}")
+    amount_paid = float(link.get("amount_paid", 0)) / 100
+    status = link.get("status", "created")
+    # Only add difference between what Razorpay says was paid and what we've already recorded
+    already_recorded = 0.0
+    async for p in db.payments.find({"booking_id": booking_id, "method": "Razorpay"}):
+        already_recorded += float(p.get("amount", 0))
+    delta = amount_paid - already_recorded
+    if delta > 0:
+        new_adv = float(b.get("advance_paid") or 0) + delta
+        await db.bookings.update_one({"id": booking_id}, {"$set": {
+            "advance_paid": new_adv, "payment_link_status": status, "updated_at": now_iso()}})
+        await db.payments.insert_one({"id": str(uuid.uuid4()), "booking_id": booking_id,
+            "amount": delta, "method": "Razorpay", "note": "Reconciled via sync",
+            "created_at": now_iso()})
+    else:
+        await db.bookings.update_one({"id": booking_id}, {"$set": {"payment_link_status": status}})
+    return {"status": status, "amount_paid": amount_paid, "reconciled": delta}
 
 
 # ---------- Health ----------
