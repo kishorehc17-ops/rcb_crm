@@ -103,6 +103,7 @@ class BookingIn(BaseModel):
     event_time: str
     location: str
     theme: str
+    theme_photo: Optional[str] = ""
     package_id: Optional[str] = None
     package_name: Optional[str] = None
     selected_addons: List[str] = []

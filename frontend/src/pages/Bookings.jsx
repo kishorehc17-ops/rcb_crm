@@ -17,7 +17,7 @@ const statusColor = (s) => ({
 
 const emptyForm = {
   customer_name: "", mobile: "", event_date: "", event_time: "18:00",
-  location: "", theme: "", package_id: "", package_name: "",
+  location: "", theme: "", theme_photo: "", package_id: "", package_name: "",
   selected_addons: [],
   special_requirements: "", status: "Inquiry", total_amount: 0, advance_paid: 0,
 };
@@ -157,6 +157,8 @@ export default function Bookings() {
               <th className="text-left px-6 py-4">Booking #</th>
               <th className="text-left px-6 py-4">Customer</th>
               <th className="text-left px-6 py-4">Event</th>
+              <th className="text-left px-6 py-4">Theme</th>
+              <th className="text-left px-6 py-4">Package</th>
               <th className="text-left px-6 py-4">Amount</th>
               <th className="text-left px-6 py-4">Status</th>
               <th className="text-right px-6 py-4">Actions</th>
@@ -164,7 +166,7 @@ export default function Bookings() {
           </thead>
           <tbody>
             {filtered.length === 0 && (
-              <tr><td colSpan={6} className="text-center py-12 text-black/50">No bookings found.</td></tr>
+              <tr><td colSpan={8} className="text-center py-12 text-black/50">No bookings found.</td></tr>
             )}
             {filtered.map((b) => (
               <tr key={b.id} className="border-t border-black/5 hover:bg-black/[0.01]">
@@ -174,12 +176,26 @@ export default function Bookings() {
                   <p className="text-xs text-black/50">{b.mobile}</p>
                 </td>
                 <td className="px-6 py-4">
-                  <p className="text-sm text-black">{b.theme}</p>
-                  <p className="text-xs text-black/50">{b.event_date} · {b.event_time}</p>
+                  <p className="text-sm text-black">{b.event_date}</p>
+                  <p className="text-xs text-black/50">{b.event_time}</p>
+                </td>
+                <td className="px-6 py-4">
+                  <div className="flex items-center gap-2.5">
+                    {b.theme_photo ? (
+                      <img src={b.theme_photo} alt={b.theme} className="w-10 h-10 rounded-xl object-cover border border-black/10 flex-shrink-0" onError={(e) => { e.target.style.display = 'none'; }} />
+                    ) : (
+                      <div className="w-10 h-10 rounded-xl bg-[#FFE5E8] flex items-center justify-center flex-shrink-0 text-[#E63946] font-bold text-sm">
+                        {(b.theme || "?")[0].toUpperCase()}
+                      </div>
+                    )}
+                    <p className="text-sm font-semibold text-black">{b.theme || "—"}</p>
+                  </div>
+                </td>
+                <td className="px-6 py-4">
                   {b.package_name && (
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-[#E63946] mt-1">{b.package_name}</p>
+                    <p className="text-sm font-bold text-black">{b.package_name}</p>
                   )}
-                  {b.selected_addons && b.selected_addons.length > 0 && (
+                  {b.selected_addons && b.selected_addons.length > 0 ? (
                     <div className="flex flex-wrap gap-1 mt-1.5">
                       {b.selected_addons.slice(0, 3).map((a) => (
                         <span key={a} className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-[#FFE5E8] text-[#E63946]">{a}</span>
@@ -188,6 +204,8 @@ export default function Bookings() {
                         <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-black/5 text-black/60">+{b.selected_addons.length - 3}</span>
                       )}
                     </div>
+                  ) : (
+                    !b.package_name && <span className="text-xs text-black/40">—</span>
                   )}
                 </td>
                 <td className="px-6 py-4">
@@ -217,25 +235,41 @@ export default function Bookings() {
         {filtered.length === 0 && <p className="text-center py-12 text-black/50">No bookings found.</p>}
         {filtered.map((b) => (
           <div key={b.id} className="bg-white border border-black/5 rounded-2xl p-4 shadow-sm">
-            <div className="flex justify-between items-start mb-2">
-              <div>
+            <div className="flex justify-between items-start mb-3">
+              <div className="min-w-0">
                 <p className="font-semibold text-black">{b.customer_name}</p>
                 <p className="text-xs text-black/50">{b.mobile} · {b.booking_number}</p>
               </div>
               <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full ${statusColor(b.status)}`}>{b.status}</span>
             </div>
-            <p className="text-sm text-black/70">{b.theme} · {b.event_date}</p>
-            {b.package_name && (
-              <p className="text-[10px] font-bold uppercase tracking-widest text-[#E63946] mt-1">{b.package_name}</p>
-            )}
-            {b.selected_addons && b.selected_addons.length > 0 && (
-              <div className="flex flex-wrap gap-1 mt-1.5">
-                {b.selected_addons.map((a) => (
-                  <span key={a} className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-[#FFE5E8] text-[#E63946]">{a}</span>
-                ))}
+            <div className="flex items-center gap-3 mb-3">
+              {b.theme_photo ? (
+                <img src={b.theme_photo} alt={b.theme} className="w-14 h-14 rounded-xl object-cover border border-black/10 flex-shrink-0" onError={(e) => { e.target.style.display = 'none'; }} />
+              ) : (
+                <div className="w-14 h-14 rounded-xl bg-[#FFE5E8] flex items-center justify-center flex-shrink-0 text-[#E63946] font-bold text-lg">
+                  {(b.theme || "?")[0].toUpperCase()}
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-black/40">Theme</p>
+                <p className="text-sm font-semibold text-black truncate">{b.theme || "—"}</p>
+                <p className="text-xs text-black/50">{b.event_date} · {b.event_time}</p>
+              </div>
+            </div>
+            {(b.package_name || (b.selected_addons && b.selected_addons.length > 0)) && (
+              <div className="mb-3 p-3 rounded-xl bg-black/[0.02]">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-black/40">Package</p>
+                {b.package_name && <p className="text-sm font-bold text-black">{b.package_name}</p>}
+                {b.selected_addons && b.selected_addons.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {b.selected_addons.map((a) => (
+                      <span key={a} className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-[#FFE5E8] text-[#E63946]">{a}</span>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
-            <p className="text-sm font-bold text-black mt-2">₹{Number(b.total_amount).toLocaleString("en-IN")}</p>
+            <p className="text-sm font-bold text-black">₹{Number(b.total_amount).toLocaleString("en-IN")}</p>
             <div className="flex gap-2 mt-3">
               <button onClick={() => setViewing(b)} data-testid={`m-view-${b.id}`} className="flex-1 bg-black text-white rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><Eye size={14} /> View</button>
               <button onClick={() => wa(b.mobile, b.customer_name)} className="flex-1 bg-green-50 text-green-700 rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><MessageCircle size={14} /> WhatsApp</button>
@@ -272,6 +306,9 @@ export default function Bookings() {
               </Field>
               <Field label="Theme">
                 <input data-testid="form-theme" value={form.theme} onChange={(e) => setForm({...form, theme: e.target.value})} className={inputCls} placeholder="e.g. Spiderman, Unicorn" />
+              </Field>
+              <Field label="Theme Photo URL">
+                <input data-testid="form-theme-photo" value={form.theme_photo} onChange={(e) => setForm({...form, theme_photo: e.target.value})} className={inputCls} placeholder="https://... (optional image link)" />
               </Field>
               <Field label="Package">
                 <select data-testid="form-package" value={form.package_id} onChange={(e) => {
@@ -339,10 +376,15 @@ export default function Bookings() {
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4" data-testid="view-modal">
           <div className="bg-white w-full max-w-2xl rounded-t-3xl sm:rounded-3xl p-6 max-h-[92vh] overflow-y-auto">
             <div className="flex justify-between items-start mb-4 pb-4 border-b border-black/5">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#E63946] mb-1">Booking Details</p>
-                <h2 className="font-display text-2xl font-bold tracking-tight text-black">{viewing.customer_name}</h2>
-                <p className="text-xs font-mono text-black/50 mt-1">{viewing.booking_number}</p>
+              <div className="flex items-start gap-3">
+                {viewing.theme_photo && (
+                  <img src={viewing.theme_photo} alt={viewing.theme} className="w-16 h-16 rounded-2xl object-cover border border-black/10" onError={(e) => { e.target.style.display = 'none'; }} />
+                )}
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#E63946] mb-1">Booking Details</p>
+                  <h2 className="font-display text-2xl font-bold tracking-tight text-black">{viewing.customer_name}</h2>
+                  <p className="text-xs font-mono text-black/50 mt-1">{viewing.booking_number}</p>
+                </div>
               </div>
               <button data-testid="close-view" onClick={() => setViewing(null)} className="p-2 rounded-full hover:bg-black/5"><X size={20} /></button>
             </div>
