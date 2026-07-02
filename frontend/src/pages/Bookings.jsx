@@ -176,6 +176,19 @@ export default function Bookings() {
                 <td className="px-6 py-4">
                   <p className="text-sm text-black">{b.theme}</p>
                   <p className="text-xs text-black/50">{b.event_date} · {b.event_time}</p>
+                  {b.package_name && (
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-[#E63946] mt-1">{b.package_name}</p>
+                  )}
+                  {b.selected_addons && b.selected_addons.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {b.selected_addons.slice(0, 3).map((a) => (
+                        <span key={a} className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-[#FFE5E8] text-[#E63946]">{a}</span>
+                      ))}
+                      {b.selected_addons.length > 3 && (
+                        <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-black/5 text-black/60">+{b.selected_addons.length - 3}</span>
+                      )}
+                    </div>
+                  )}
                 </td>
                 <td className="px-6 py-4">
                   <p className="text-sm font-bold text-black">₹{Number(b.total_amount).toLocaleString("en-IN")}</p>
@@ -212,7 +225,17 @@ export default function Bookings() {
               <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full ${statusColor(b.status)}`}>{b.status}</span>
             </div>
             <p className="text-sm text-black/70">{b.theme} · {b.event_date}</p>
-            <p className="text-sm font-bold text-black mt-1">₹{Number(b.total_amount).toLocaleString("en-IN")}</p>
+            {b.package_name && (
+              <p className="text-[10px] font-bold uppercase tracking-widest text-[#E63946] mt-1">{b.package_name}</p>
+            )}
+            {b.selected_addons && b.selected_addons.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {b.selected_addons.map((a) => (
+                  <span key={a} className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-[#FFE5E8] text-[#E63946]">{a}</span>
+                ))}
+              </div>
+            )}
+            <p className="text-sm font-bold text-black mt-2">₹{Number(b.total_amount).toLocaleString("en-IN")}</p>
             <div className="flex gap-2 mt-3">
               <button onClick={() => setViewing(b)} data-testid={`m-view-${b.id}`} className="flex-1 bg-black text-white rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><Eye size={14} /> View</button>
               <button onClick={() => wa(b.mobile, b.customer_name)} className="flex-1 bg-green-50 text-green-700 rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><MessageCircle size={14} /> WhatsApp</button>
