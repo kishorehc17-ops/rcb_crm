@@ -1,54 +1,51 @@
-import { useEffect } from "react";
+import React from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
-import { HOME } from "@/constants/testIds";
-
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
-
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
-
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
-  return (
-    <div>
-      <header className="App-header">
-        <a
-          data-testid={HOME.emergentLink}
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
-};
+import { Toaster } from "sonner";
+import { AuthProvider } from "@/context/AuthContext";
+import ProtectedRoute from "@/components/ProtectedRoute";
+import Layout from "@/components/Layout";
+import Login from "@/pages/Login";
+import Dashboard from "@/pages/Dashboard";
+import Bookings from "@/pages/Bookings";
+import CalendarPage from "@/pages/CalendarPage";
+import Packages from "@/pages/Packages";
+import Payments from "@/pages/Payments";
+import Expenses from "@/pages/Expenses";
+import Vendors from "@/pages/Vendors";
+import Staff from "@/pages/Staff";
+import Pipeline from "@/pages/Pipeline";
+import Invoice from "@/pages/Invoice";
 
 function App() {
   return (
     <div className="App">
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
+      <AuthProvider>
+        <BrowserRouter>
+          <Toaster position="top-right" richColors />
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route
+              element={
+                <ProtectedRoute>
+                  <Layout />
+                </ProtectedRoute>
+              }
+            >
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/bookings" element={<Bookings />} />
+              <Route path="/calendar" element={<CalendarPage />} />
+              <Route path="/packages" element={<Packages />} />
+              <Route path="/payments" element={<Payments />} />
+              <Route path="/expenses" element={<Expenses />} />
+              <Route path="/vendors" element={<Vendors />} />
+              <Route path="/staff" element={<Staff />} />
+              <Route path="/pipeline" element={<Pipeline />} />
+              <Route path="/invoice/:id" element={<Invoice />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
     </div>
   );
 }

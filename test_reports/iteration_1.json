@@ -1,0 +1,30 @@
+{
+  "summary": "First-finish smoke test for RCB Events CRM. Backend auth, dashboard stats, packages, bookings, payments, expenses endpoints all work with JWT. Frontend login → dashboard → bookings CRUD → calendar → packages → pipeline (lead creation, 7 kanban columns) → payments → expenses → vendors → staff → logout → protected route redirect all pass.",
+  "tested_scope": ["backend", "frontend", "auth", "integration"],
+  "passed": [
+    "POST /api/auth/login returns JWT token for admin@rcbevents.com",
+    "GET /api/auth/me returns admin profile with Bearer token",
+    "GET /api/packages returns 4 seeded packages (Standard, Gold, Gold Plus, Diamond)",
+    "GET /api/dashboard/stats returns all stat fields (net_revenue computed on FE)",
+    "POST /api/bookings creates booking with auto booking_number 'RCB-YYMMDD-XXXX' prefix",
+    "POST /api/payments records payment tied to booking_id",
+    "POST /api/expenses creates expense with category",
+    "DELETE /api/bookings/{id} works",
+    "Login UI redirects to Dashboard, all 8 stat cards render (Total Bookings, Today, Upcoming, Completed, Revenue, Pending Payments, Total Expenses, Net Revenue) with Recent Bookings section",
+    "Booking creation via UI - new row appears with RCB- prefix visible",
+    "Calendar, Packages, Payments, Expenses, Vendors, Staff pages load with respective data-testid page containers",
+    "Pipeline page shows 7 kanban columns; lead creation via new-lead-btn works and appears in Lead column",
+    "Logout clears session and redirects to /login",
+    "Protected route /bookings redirects to /login when unauthenticated"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true,
+  "notes": [
+    "Booking API returns field name 'booking_number' (not 'booking_no'). Value starts with 'RCB-' as required.",
+    "Backend /api/dashboard/stats returns 7 fields; 'net_revenue' is computed client-side from revenue - total_expenses (verified visible on dashboard as '₹-500').",
+    "Leads endpoint requires 'mobile' field (frontend already sends this correctly)."
+  ]
+}

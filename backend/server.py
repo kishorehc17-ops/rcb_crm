@@ -1,72 +1,474 @@
-from fastapi import FastAPI, APIRouter
 from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List
-import uuid
-from datetime import datetime, timezone
-
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
+import os
+import logging
+import uuid
+import bcrypt
+import jwt
+from datetime import datetime, timezone, timedelta
+from typing import List, Optional, Any
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, Field, ConfigDict, EmailStr
+
+# ---------- Setup ----------
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Create the main app without a prefix
-app = FastAPI()
-
-# Create a router with the /api prefix
+app = FastAPI(title="RCB Events CRM")
 api_router = APIRouter(prefix="/api")
+security = HTTPBearer(auto_error=False)
+
+JWT_SECRET = os.environ['JWT_SECRET']
+JWT_ALGO = "HS256"
 
 
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+# ---------- Helpers ----------
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
 
-# Add your routes to the router instead of directly to app
+def hash_password(pw: str) -> str:
+    return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
+
+
+def verify_password(pw: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(pw.encode(), hashed.encode())
+    except Exception:
+        return False
+
+
+def create_access_token(user_id: str, email: str, role: str) -> str:
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "role": role,
+        "exp": datetime.now(timezone.utc) + timedelta(days=7),
+        "type": "access",
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
+
+
+async def get_current_user(request: Request, creds: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    token = None
+    if creds and creds.credentials:
+        token = creds.credentials
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
+def strip_id(doc):
+    if doc is None:
+        return None
+    doc.pop("_id", None)
+    return doc
+
+
+# ---------- Models ----------
+class RegisterIn(BaseModel):
+    email: EmailStr
+    password: str
+    name: str
+    role: Optional[str] = "staff"
+
+
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class BookingIn(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    customer_name: str
+    mobile: str
+    event_date: str  # ISO date
+    event_time: str
+    location: str
+    theme: str
+    package_id: Optional[str] = None
+    package_name: Optional[str] = None
+    special_requirements: Optional[str] = ""
+    status: str = "Inquiry"
+    total_amount: float = 0
+    advance_paid: float = 0
+
+
+class PackageIn(BaseModel):
+    name: str
+    price: float
+    decorations: List[str] = []
+    max_addons: int = 0
+    active: bool = True
+
+
+class PaymentIn(BaseModel):
+    booking_id: str
+    amount: float
+    method: str = "Cash"
+    note: Optional[str] = ""
+
+
+class ExpenseIn(BaseModel):
+    date: str
+    category: str
+    vendor_id: Optional[str] = None
+    staff_id: Optional[str] = None
+    amount: float
+    remarks: Optional[str] = ""
+
+
+class VendorIn(BaseModel):
+    name: str
+    phone: str
+    address: Optional[str] = ""
+    gst: Optional[str] = ""
+    active: bool = True
+
+
+class StaffIn(BaseModel):
+    employee_code: str
+    name: str
+    phone: str
+    address: Optional[str] = ""
+    active: bool = True
+
+
+class LeadIn(BaseModel):
+    name: str
+    mobile: str
+    source: str = "Manual"  # Meta, Website, WhatsApp, Manual
+    stage: str = "Lead"  # Lead, Contacted, Quotation Sent, Negotiation, Booked, Completed, Review Received
+    notes: Optional[str] = ""
+    event_date: Optional[str] = None
+    theme: Optional[str] = ""
+
+
+# ---------- Auth Routes ----------
+@api_router.post("/auth/register")
+async def register(data: RegisterIn):
+    email = data.email.lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    user_id = str(uuid.uuid4())
+    doc = {
+        "id": user_id,
+        "email": email,
+        "password_hash": hash_password(data.password),
+        "name": data.name,
+        "role": data.role or "staff",
+        "created_at": now_iso(),
+    }
+    await db.users.insert_one(doc)
+    token = create_access_token(user_id, email, doc["role"])
+    return {"token": token, "user": {"id": user_id, "email": email, "name": data.name, "role": doc["role"]}}
+
+
+@api_router.post("/auth/login")
+async def login(data: LoginIn):
+    email = data.email.lower()
+    user = await db.users.find_one({"email": email})
+    if not user or not verify_password(data.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    token = create_access_token(user["id"], user["email"], user["role"])
+    return {
+        "token": token,
+        "user": {"id": user["id"], "email": user["email"], "name": user["name"], "role": user["role"]},
+    }
+
+
+@api_router.get("/auth/me")
+async def me(user: dict = Depends(get_current_user)):
+    return user
+
+
+# ---------- Dashboard ----------
+@api_router.get("/dashboard/stats")
+async def dashboard_stats(user: dict = Depends(get_current_user)):
+    today = datetime.now(timezone.utc).date().isoformat()
+    total = await db.bookings.count_documents({})
+    today_count = await db.bookings.count_documents({"event_date": today})
+    upcoming = await db.bookings.count_documents({"event_date": {"$gt": today}, "status": {"$nin": ["Cancelled", "Completed"]}})
+    completed = await db.bookings.count_documents({"status": "Completed"})
+
+    # Revenue: sum of advance_paid for all bookings
+    pipeline_rev = [{"$group": {"_id": None, "total": {"$sum": "$advance_paid"}}}]
+    rev_agg = await db.bookings.aggregate(pipeline_rev).to_list(1)
+    revenue = rev_agg[0]["total"] if rev_agg else 0
+
+    # Pending payments
+    pipeline_pend = [{"$project": {"balance": {"$subtract": ["$total_amount", "$advance_paid"]}}},
+                     {"$group": {"_id": None, "total": {"$sum": "$balance"}}}]
+    pend_agg = await db.bookings.aggregate(pipeline_pend).to_list(1)
+    pending = pend_agg[0]["total"] if pend_agg else 0
+
+    # Expenses
+    exp_agg = await db.expenses.aggregate([{"$group": {"_id": None, "total": {"$sum": "$amount"}}}]).to_list(1)
+    total_expenses = exp_agg[0]["total"] if exp_agg else 0
+
+    return {
+        "total_bookings": total,
+        "today_bookings": today_count,
+        "upcoming_bookings": upcoming,
+        "completed_bookings": completed,
+        "revenue": revenue,
+        "pending_payments": pending,
+        "total_expenses": total_expenses,
+    }
+
+
+# ---------- Bookings ----------
+def _booking_number():
+    return "RCB-" + datetime.now(timezone.utc).strftime("%y%m%d") + "-" + uuid.uuid4().hex[:5].upper()
+
+
+@api_router.get("/bookings")
+async def list_bookings(user: dict = Depends(get_current_user)):
+    docs = await db.bookings.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return docs
+
+
+@api_router.post("/bookings")
+async def create_booking(data: BookingIn, user: dict = Depends(get_current_user)):
+    doc = data.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["booking_number"] = _booking_number()
+    doc["created_at"] = now_iso()
+    doc["updated_at"] = now_iso()
+    await db.bookings.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/bookings/{booking_id}")
+async def get_booking(booking_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    return doc
+
+
+@api_router.put("/bookings/{booking_id}")
+async def update_booking(booking_id: str, data: BookingIn, user: dict = Depends(get_current_user)):
+    upd = data.model_dump()
+    upd["updated_at"] = now_iso()
+    result = await db.bookings.update_one({"id": booking_id}, {"$set": upd})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    doc = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    return doc
+
+
+@api_router.delete("/bookings/{booking_id}")
+async def delete_booking(booking_id: str, user: dict = Depends(get_current_user)):
+    result = await db.bookings.delete_one({"id": booking_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    return {"ok": True}
+
+
+# ---------- Packages ----------
+@api_router.get("/packages")
+async def list_packages(active_only: bool = False, user: dict = Depends(get_current_user)):
+    q = {"active": True} if active_only else {}
+    docs = await db.packages.find(q, {"_id": 0}).to_list(100)
+    return docs
+
+
+@api_router.post("/packages")
+async def create_package(data: PackageIn, user: dict = Depends(get_current_user)):
+    doc = data.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = now_iso()
+    await db.packages.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/packages/{pkg_id}")
+async def update_package(pkg_id: str, data: PackageIn, user: dict = Depends(get_current_user)):
+    upd = data.model_dump()
+    result = await db.packages.update_one({"id": pkg_id}, {"$set": upd})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Package not found")
+    doc = await db.packages.find_one({"id": pkg_id}, {"_id": 0})
+    return doc
+
+
+@api_router.delete("/packages/{pkg_id}")
+async def delete_package(pkg_id: str, user: dict = Depends(get_current_user)):
+    await db.packages.delete_one({"id": pkg_id})
+    return {"ok": True}
+
+
+# ---------- Payments ----------
+@api_router.get("/payments")
+async def list_payments(booking_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    q = {"booking_id": booking_id} if booking_id else {}
+    docs = await db.payments.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return docs
+
+
+@api_router.post("/payments")
+async def create_payment(data: PaymentIn, user: dict = Depends(get_current_user)):
+    doc = data.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = now_iso()
+    await db.payments.insert_one(doc)
+    # Update booking advance
+    booking = await db.bookings.find_one({"id": data.booking_id})
+    if booking:
+        new_advance = (booking.get("advance_paid") or 0) + data.amount
+        await db.bookings.update_one({"id": data.booking_id}, {"$set": {"advance_paid": new_advance, "updated_at": now_iso()}})
+    doc.pop("_id", None)
+    return doc
+
+
+# ---------- Expenses ----------
+@api_router.get("/expenses")
+async def list_expenses(user: dict = Depends(get_current_user)):
+    docs = await db.expenses.find({}, {"_id": 0}).sort("date", -1).to_list(1000)
+    return docs
+
+
+@api_router.post("/expenses")
+async def create_expense(data: ExpenseIn, user: dict = Depends(get_current_user)):
+    doc = data.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = now_iso()
+    await db.expenses.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.delete("/expenses/{exp_id}")
+async def delete_expense(exp_id: str, user: dict = Depends(get_current_user)):
+    await db.expenses.delete_one({"id": exp_id})
+    return {"ok": True}
+
+
+# ---------- Vendors ----------
+@api_router.get("/vendors")
+async def list_vendors(user: dict = Depends(get_current_user)):
+    return await db.vendors.find({}, {"_id": 0}).to_list(500)
+
+
+@api_router.post("/vendors")
+async def create_vendor(data: VendorIn, user: dict = Depends(get_current_user)):
+    doc = data.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = now_iso()
+    await db.vendors.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/vendors/{vid}")
+async def update_vendor(vid: str, data: VendorIn, user: dict = Depends(get_current_user)):
+    await db.vendors.update_one({"id": vid}, {"$set": data.model_dump()})
+    doc = await db.vendors.find_one({"id": vid}, {"_id": 0})
+    return doc
+
+
+@api_router.delete("/vendors/{vid}")
+async def delete_vendor(vid: str, user: dict = Depends(get_current_user)):
+    await db.vendors.delete_one({"id": vid})
+    return {"ok": True}
+
+
+# ---------- Staff ----------
+@api_router.get("/staff")
+async def list_staff(user: dict = Depends(get_current_user)):
+    return await db.staff.find({}, {"_id": 0}).to_list(500)
+
+
+@api_router.post("/staff")
+async def create_staff(data: StaffIn, user: dict = Depends(get_current_user)):
+    doc = data.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = now_iso()
+    await db.staff.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/staff/{sid}")
+async def update_staff(sid: str, data: StaffIn, user: dict = Depends(get_current_user)):
+    await db.staff.update_one({"id": sid}, {"$set": data.model_dump()})
+    doc = await db.staff.find_one({"id": sid}, {"_id": 0})
+    return doc
+
+
+@api_router.delete("/staff/{sid}")
+async def delete_staff(sid: str, user: dict = Depends(get_current_user)):
+    await db.staff.delete_one({"id": sid})
+    return {"ok": True}
+
+
+# ---------- Leads ----------
+@api_router.get("/leads")
+async def list_leads(user: dict = Depends(get_current_user)):
+    return await db.leads.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+
+
+@api_router.post("/leads")
+async def create_lead(data: LeadIn, user: dict = Depends(get_current_user)):
+    doc = data.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = now_iso()
+    await db.leads.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/leads/{lid}")
+async def update_lead(lid: str, data: LeadIn, user: dict = Depends(get_current_user)):
+    await db.leads.update_one({"id": lid}, {"$set": data.model_dump()})
+    doc = await db.leads.find_one({"id": lid}, {"_id": 0})
+    return doc
+
+
+@api_router.delete("/leads/{lid}")
+async def delete_lead(lid: str, user: dict = Depends(get_current_user)):
+    await db.leads.delete_one({"id": lid})
+    return {"ok": True}
+
+
+class StageUpdate(BaseModel):
+    stage: str
+
+
+@api_router.patch("/leads/{lid}/stage")
+async def update_lead_stage(lid: str, data: StageUpdate, user: dict = Depends(get_current_user)):
+    await db.leads.update_one({"id": lid}, {"$set": {"stage": data.stage}})
+    doc = await db.leads.find_one({"id": lid}, {"_id": 0})
+    return doc
+
+
+# ---------- Health ----------
 @api_router.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"message": "RCB Events CRM API", "status": "ok"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
-
-# Include the router in the main app
+# ---------- Include router ----------
 app.include_router(api_router)
 
 app.add_middleware(
@@ -77,13 +479,45 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+
+# ---------- Startup: seed admin + default packages ----------
+@app.on_event("startup")
+async def on_startup():
+    await db.users.create_index("email", unique=True)
+    await db.bookings.create_index("event_date")
+    await db.leads.create_index("stage")
+
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@rcbevents.com").lower()
+    admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
+    existing = await db.users.find_one({"email": admin_email})
+    if not existing:
+        await db.users.insert_one({
+            "id": str(uuid.uuid4()),
+            "email": admin_email,
+            "password_hash": hash_password(admin_password),
+            "name": "Admin",
+            "role": "admin",
+            "created_at": now_iso(),
+        })
+        logger.info(f"Seeded admin: {admin_email}")
+    elif not verify_password(admin_password, existing["password_hash"]):
+        await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_password)}})
+
+    # Seed default packages
+    if await db.packages.count_documents({}) == 0:
+        defaults = [
+            {"id": str(uuid.uuid4()), "name": "Standard", "price": 4999, "decorations": ["50 Balloons", "Basic Backdrop", "Welcome Board"], "max_addons": 2, "active": True, "created_at": now_iso()},
+            {"id": str(uuid.uuid4()), "name": "Gold", "price": 9999, "decorations": ["100 Balloons", "Themed Backdrop", "Welcome Board", "Foil Balloons"], "max_addons": 4, "active": True, "created_at": now_iso()},
+            {"id": str(uuid.uuid4()), "name": "Gold Plus", "price": 14999, "decorations": ["150 Balloons", "Premium Backdrop", "Welcome Board", "Foil Balloons", "LED Lights"], "max_addons": 6, "active": True, "created_at": now_iso()},
+            {"id": str(uuid.uuid4()), "name": "Diamond", "price": 24999, "decorations": ["250 Balloons", "Luxury Backdrop", "Welcome Board", "Foil Balloons", "LED Lights", "Photo Props", "Cake Table Setup"], "max_addons": 10, "active": True, "created_at": now_iso()},
+        ]
+        await db.packages.insert_many(defaults)
+        logger.info("Seeded default packages")
+
+
 @app.on_event("shutdown")
-async def shutdown_db_client():
+async def on_shutdown():
     client.close()

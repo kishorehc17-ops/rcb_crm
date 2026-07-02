@@ -1,0 +1,279 @@
+import React, { useEffect, useState } from "react";
+import { useSearchParams, useNavigate } from "react-router-dom";
+import api from "@/api";
+import { toast } from "sonner";
+import { Trash2, Edit3, MessageCircle, FileText, X, Plus, Search } from "lucide-react";
+
+const STATUSES = ["Inquiry", "Pending", "Confirmed", "In Progress", "Completed", "Cancelled"];
+
+const statusColor = (s) => ({
+  "Inquiry": "bg-black/10 text-black",
+  "Pending": "bg-[#FFE5E8] text-[#E63946]",
+  "Confirmed": "bg-green-100 text-green-700",
+  "In Progress": "bg-blue-100 text-blue-700",
+  "Completed": "bg-black text-white",
+  "Cancelled": "bg-red-100 text-red-700",
+}[s] || "bg-black/10 text-black");
+
+const emptyForm = {
+  customer_name: "", mobile: "", event_date: "", event_time: "18:00",
+  location: "", theme: "", package_id: "", package_name: "",
+  special_requirements: "", status: "Inquiry", total_amount: 0, advance_paid: 0,
+};
+
+export default function Bookings() {
+  const [rows, setRows] = useState([]);
+  const [packages, setPackages] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState(emptyForm);
+  const [editingId, setEditingId] = useState(null);
+  const [search, setSearch] = useState("");
+  const [filterStatus, setFilterStatus] = useState("All");
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
+
+  const load = async () => {
+    const r = await api.get("/bookings");
+    setRows(r.data);
+  };
+
+  useEffect(() => {
+    load();
+    api.get("/packages", { params: { active_only: true } }).then((r) => setPackages(r.data));
+    if (params.get("new")) setShowForm(true);
+  }, []);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    try {
+      const payload = { ...form, total_amount: Number(form.total_amount), advance_paid: Number(form.advance_paid) };
+      if (editingId) {
+        await api.put(`/bookings/${editingId}`, payload);
+        toast.success("Booking updated");
+      } else {
+        await api.post("/bookings", payload);
+        toast.success("Booking created");
+      }
+      setShowForm(false);
+      setForm(emptyForm);
+      setEditingId(null);
+      load();
+    } catch (err) {
+      toast.error("Failed to save booking");
+    }
+  };
+
+  const del = async (id) => {
+    if (!window.confirm("Delete this booking?")) return;
+    await api.delete(`/bookings/${id}`);
+    toast.success("Deleted");
+    load();
+  };
+
+  const edit = (b) => {
+    setForm({ ...b });
+    setEditingId(b.id);
+    setShowForm(true);
+  };
+
+  const filtered = rows.filter((b) => {
+    const q = search.toLowerCase();
+    const matchQ = !q || b.customer_name?.toLowerCase().includes(q) || b.mobile?.includes(q) || b.booking_number?.toLowerCase().includes(q);
+    const matchS = filterStatus === "All" || b.status === filterStatus;
+    return matchQ && matchS;
+  });
+
+  const wa = (mobile, name) => {
+    const msg = encodeURIComponent(`Hi ${name}, this is RCB Events. Thank you for your booking!`);
+    const num = mobile.replace(/\D/g, "");
+    window.open(`https://wa.me/${num}?text=${msg}`, "_blank");
+  };
+
+  return (
+    <div className="space-y-6" data-testid="bookings-page">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#E63946] mb-2">Bookings</p>
+          <h1 className="font-display text-4xl sm:text-5xl font-black tracking-tighter text-black">Manage Events</h1>
+        </div>
+        <button
+          onClick={() => { setForm(emptyForm); setEditingId(null); setShowForm(true); }}
+          data-testid="new-booking-btn"
+          className="bg-[#E63946] hover:bg-[#D90429] text-white rounded-full px-6 py-3 font-semibold transition-all active:scale-95 shadow-md shadow-red-500/20 flex items-center gap-2"
+        >
+          <Plus size={18} /> New Booking
+        </button>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap gap-3 items-center">
+        <div className="relative flex-1 min-w-[220px]">
+          <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/40" />
+          <input
+            data-testid="booking-search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by name, phone, booking #"
+            className="w-full bg-white border border-black/10 rounded-xl pl-10 pr-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-[#E63946]"
+          />
+        </div>
+        <div className="flex gap-2 overflow-x-auto no-scrollbar">
+          {["All", ...STATUSES].map((s) => (
+            <button
+              key={s}
+              onClick={() => setFilterStatus(s)}
+              data-testid={`filter-${s}`}
+              className={`px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap transition-all ${
+                filterStatus === s ? "bg-black text-white" : "bg-white border border-black/10 text-black/70 hover:border-black"
+              }`}
+            >{s}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Table (desktop) / Cards (mobile) */}
+      <div className="hidden md:block bg-white border border-black/5 rounded-3xl overflow-hidden shadow-sm">
+        <table className="w-full">
+          <thead className="bg-black/[0.02] text-xs uppercase tracking-widest text-black/50">
+            <tr>
+              <th className="text-left px-6 py-4">Booking #</th>
+              <th className="text-left px-6 py-4">Customer</th>
+              <th className="text-left px-6 py-4">Event</th>
+              <th className="text-left px-6 py-4">Amount</th>
+              <th className="text-left px-6 py-4">Status</th>
+              <th className="text-right px-6 py-4">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 && (
+              <tr><td colSpan={6} className="text-center py-12 text-black/50">No bookings found.</td></tr>
+            )}
+            {filtered.map((b) => (
+              <tr key={b.id} className="border-t border-black/5 hover:bg-black/[0.01]">
+                <td className="px-6 py-4 font-mono text-xs text-black/60">{b.booking_number}</td>
+                <td className="px-6 py-4">
+                  <p className="font-semibold text-black">{b.customer_name}</p>
+                  <p className="text-xs text-black/50">{b.mobile}</p>
+                </td>
+                <td className="px-6 py-4">
+                  <p className="text-sm text-black">{b.theme}</p>
+                  <p className="text-xs text-black/50">{b.event_date} · {b.event_time}</p>
+                </td>
+                <td className="px-6 py-4">
+                  <p className="text-sm font-bold text-black">₹{Number(b.total_amount).toLocaleString("en-IN")}</p>
+                  <p className="text-xs text-black/50">Bal: ₹{(Number(b.total_amount) - Number(b.advance_paid)).toLocaleString("en-IN")}</p>
+                </td>
+                <td className="px-6 py-4">
+                  <span className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full ${statusColor(b.status)}`}>{b.status}</span>
+                </td>
+                <td className="px-6 py-4">
+                  <div className="flex items-center justify-end gap-1">
+                    <button onClick={() => wa(b.mobile, b.customer_name)} data-testid={`wa-${b.id}`} title="WhatsApp" className="p-2 rounded-lg hover:bg-green-50 text-green-600"><MessageCircle size={16} /></button>
+                    <button onClick={() => navigate(`/invoice/${b.id}`)} data-testid={`invoice-${b.id}`} title="Invoice" className="p-2 rounded-lg hover:bg-black/5"><FileText size={16} /></button>
+                    <button onClick={() => edit(b)} data-testid={`edit-${b.id}`} title="Edit" className="p-2 rounded-lg hover:bg-black/5"><Edit3 size={16} /></button>
+                    <button onClick={() => del(b.id)} data-testid={`delete-${b.id}`} title="Delete" className="p-2 rounded-lg hover:bg-red-50 text-[#E63946]"><Trash2 size={16} /></button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Mobile cards */}
+      <div className="md:hidden space-y-3">
+        {filtered.length === 0 && <p className="text-center py-12 text-black/50">No bookings found.</p>}
+        {filtered.map((b) => (
+          <div key={b.id} className="bg-white border border-black/5 rounded-2xl p-4 shadow-sm">
+            <div className="flex justify-between items-start mb-2">
+              <div>
+                <p className="font-semibold text-black">{b.customer_name}</p>
+                <p className="text-xs text-black/50">{b.mobile} · {b.booking_number}</p>
+              </div>
+              <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full ${statusColor(b.status)}`}>{b.status}</span>
+            </div>
+            <p className="text-sm text-black/70">{b.theme} · {b.event_date}</p>
+            <p className="text-sm font-bold text-black mt-1">₹{Number(b.total_amount).toLocaleString("en-IN")}</p>
+            <div className="flex gap-2 mt-3">
+              <button onClick={() => wa(b.mobile, b.customer_name)} className="flex-1 bg-green-50 text-green-700 rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><MessageCircle size={14} /> WhatsApp</button>
+              <button onClick={() => edit(b)} className="flex-1 bg-black/5 rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><Edit3 size={14} /> Edit</button>
+              <button onClick={() => del(b.id)} className="bg-red-50 text-[#E63946] rounded-full px-3 py-2"><Trash2 size={14} /></button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Form modal */}
+      {showForm && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="bg-white w-full max-w-2xl rounded-t-3xl sm:rounded-3xl p-6 max-h-[92vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="font-display text-2xl font-bold tracking-tight text-black">{editingId ? "Edit" : "New"} Booking</h2>
+              <button data-testid="close-form" onClick={() => setShowForm(false)} className="p-2 rounded-full hover:bg-black/5"><X size={20} /></button>
+            </div>
+            <form onSubmit={submit} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field label="Customer Name" required>
+                <input required data-testid="form-name" value={form.customer_name} onChange={(e) => setForm({...form, customer_name: e.target.value})} className={inputCls} />
+              </Field>
+              <Field label="Mobile Number" required>
+                <input required data-testid="form-mobile" value={form.mobile} onChange={(e) => setForm({...form, mobile: e.target.value})} className={inputCls} />
+              </Field>
+              <Field label="Event Date" required>
+                <input required type="date" data-testid="form-date" value={form.event_date} onChange={(e) => setForm({...form, event_date: e.target.value})} className={inputCls} />
+              </Field>
+              <Field label="Event Time">
+                <input type="time" data-testid="form-time" value={form.event_time} onChange={(e) => setForm({...form, event_time: e.target.value})} className={inputCls} />
+              </Field>
+              <Field label="Location" className="sm:col-span-2">
+                <input data-testid="form-location" value={form.location} onChange={(e) => setForm({...form, location: e.target.value})} className={inputCls} />
+              </Field>
+              <Field label="Theme">
+                <input data-testid="form-theme" value={form.theme} onChange={(e) => setForm({...form, theme: e.target.value})} className={inputCls} placeholder="e.g. Spiderman, Unicorn" />
+              </Field>
+              <Field label="Package">
+                <select data-testid="form-package" value={form.package_id} onChange={(e) => {
+                  const p = packages.find((pk) => pk.id === e.target.value);
+                  setForm({...form, package_id: e.target.value, package_name: p?.name || "", total_amount: p?.price || form.total_amount});
+                }} className={inputCls}>
+                  <option value="">Select package</option>
+                  {packages.map((p) => <option key={p.id} value={p.id}>{p.name} — ₹{p.price}</option>)}
+                </select>
+              </Field>
+              <Field label="Total Amount (₹)">
+                <input type="number" data-testid="form-total" value={form.total_amount} onChange={(e) => setForm({...form, total_amount: e.target.value})} className={inputCls} />
+              </Field>
+              <Field label="Advance Paid (₹)">
+                <input type="number" data-testid="form-advance" value={form.advance_paid} onChange={(e) => setForm({...form, advance_paid: e.target.value})} className={inputCls} />
+              </Field>
+              <Field label="Status">
+                <select data-testid="form-status" value={form.status} onChange={(e) => setForm({...form, status: e.target.value})} className={inputCls}>
+                  {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </Field>
+              <Field label="Special Requirements" className="sm:col-span-2">
+                <textarea data-testid="form-req" value={form.special_requirements} onChange={(e) => setForm({...form, special_requirements: e.target.value})} rows={3} className={inputCls} />
+              </Field>
+              <div className="sm:col-span-2 flex gap-2 justify-end pt-2">
+                <button type="button" onClick={() => setShowForm(false)} className="px-6 py-3 rounded-full border border-black/10 font-semibold hover:border-black">Cancel</button>
+                <button type="submit" data-testid="submit-booking" className="px-6 py-3 rounded-full bg-[#E63946] hover:bg-[#D90429] text-white font-semibold shadow-md shadow-red-500/20 active:scale-95 transition-all">
+                  {editingId ? "Update" : "Create"} Booking
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const inputCls = "w-full bg-white border border-black/10 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-[#E63946] focus:border-transparent transition-all";
+
+const Field = ({ label, children, className = "", required }) => (
+  <div className={className}>
+    <label className="text-xs font-bold uppercase tracking-widest text-black/60 mb-1.5 block">
+      {label} {required && <span className="text-[#E63946]">*</span>}
+    </label>
+    {children}
+  </div>
+);
