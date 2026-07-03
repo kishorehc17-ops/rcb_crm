@@ -95,7 +95,7 @@ export default function Packages() {
 
       {show && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-3xl p-6 max-h-[92vh] overflow-y-auto">
+          <div className="bg-white w-full max-w-lg rounded-3xl p-6 pb-24 sm:pb-6 max-h-[92vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-4">
               <h2 className="font-display text-2xl font-bold tracking-tight">{editingId ? "Edit" : "New"} Package</h2>
               <button onClick={() => setShow(false)} className="p-2 rounded-full hover:bg-black/5"><X size={20} /></button>

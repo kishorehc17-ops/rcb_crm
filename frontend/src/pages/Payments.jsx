@@ -78,7 +78,7 @@ export default function Payments() {
 
       {show && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <form onSubmit={submit} className="bg-white w-full max-w-md rounded-3xl p-6 space-y-4">
+          <form onSubmit={submit} className="bg-white w-full max-w-md rounded-3xl p-6 pb-24 sm:pb-6 max-h-[92vh] overflow-y-auto space-y-4">
             <h2 className="font-display text-2xl font-bold">Record Payment</h2>
             <div>
               <label className="text-xs font-bold uppercase tracking-widest text-black/60 mb-1.5 block">Booking *</label>

@@ -60,7 +60,7 @@ export default function Staff() {
 
       {show && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <form onSubmit={submit} className="bg-white w-full max-w-md rounded-3xl p-6 space-y-3">
+          <form onSubmit={submit} className="bg-white w-full max-w-md rounded-3xl p-6 pb-24 sm:pb-6 max-h-[92vh] overflow-y-auto space-y-3">
             <h2 className="font-display text-2xl font-bold">{editingId ? "Edit" : "New"} Staff</h2>
             <input required placeholder="Employee Code" data-testid="s-code" value={form.employee_code} onChange={(e) => setForm({...form, employee_code: e.target.value})} className="w-full border border-black/10 rounded-xl px-4 py-2.5" />
             <input required placeholder="Name" data-testid="s-name" value={form.name} onChange={(e) => setForm({...form, name: e.target.value})} className="w-full border border-black/10 rounded-xl px-4 py-2.5" />

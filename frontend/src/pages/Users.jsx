@@ -52,7 +52,7 @@ export default function Users() {
       </div>
       {show && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <form onSubmit={submit} className="bg-white w-full max-w-md rounded-3xl p-6 space-y-3">
+          <form onSubmit={submit} className="bg-white w-full max-w-md rounded-3xl p-6 pb-24 sm:pb-6 max-h-[92vh] overflow-y-auto space-y-3">
             <div className="flex justify-between"><h2 className="font-display text-2xl font-bold">New User</h2><button type="button" onClick={() => setShow(false)}><X size={20} /></button></div>
             <input required placeholder="Name" data-testid="u-name" value={form.name} onChange={(e) => setForm({...form, name: e.target.value})} className="w-full border border-black/10 rounded-xl px-4 py-2.5" />
             <input required type="email" placeholder="Email" data-testid="u-email" value={form.email} onChange={(e) => setForm({...form, email: e.target.value})} className="w-full border border-black/10 rounded-xl px-4 py-2.5" />

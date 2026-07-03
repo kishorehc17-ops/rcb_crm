@@ -176,6 +176,7 @@ class LeadIn(BaseModel):
     notes: Optional[str] = ""
     event_date: Optional[str] = None
     theme: Optional[str] = ""
+    location: Optional[str] = ""
 
 
 # ---------- Auth Routes ----------
@@ -514,12 +515,14 @@ class UserUpdateIn(BaseModel):
 @api_router.put("/users/{uid}")
 async def update_user(uid: str, data: UserUpdateIn, user: dict = Depends(require_roles("admin"))):
     upd = {}
-    if data.name: upd["name"] = data.name
+    if data.name:
+        upd["name"] = data.name
     if data.role:
         if data.role not in ("admin", "manager", "sales", "staff"):
             raise HTTPException(status_code=400, detail="Invalid role")
         upd["role"] = data.role
-    if data.password: upd["password_hash"] = hash_password(data.password)
+    if data.password:
+        upd["password_hash"] = hash_password(data.password)
     if upd:
         await db.users.update_one({"id": uid}, {"$set": upd})
     return {"ok": True}
@@ -570,7 +573,8 @@ class RzpWebhook(BaseModel):
 
 @api_router.post("/payments/webhook")
 async def rzp_webhook(request: Request):
-    import hmac, hashlib
+    import hmac
+    import hashlib
     import json as _json
     raw = await request.body()
     webhook_secret = os.environ.get("RAZORPAY_WEBHOOK_SECRET", "")
@@ -685,6 +689,11 @@ async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_cur
 # ---------- Include router ----------
 app.include_router(api_router)
 
+# ---------- WhatsApp module ----------
+from whatsapp import build_router as _build_wa_router, seed_demo_conversations as _seed_wa
+_wa_router = _build_wa_router(get_current_user, db)
+app.include_router(_wa_router)
+
 # Serve uploaded files (mounted under /api so kubernetes ingress routes to backend)
 app.mount("/api/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
@@ -738,6 +747,9 @@ async def on_startup():
 
     # Backfill addons on existing packages (safe no-op if already set)
     await db.packages.update_many({"addons": {"$exists": False}}, {"$set": {"addons": ["Cake Table", "Photo Props", "LED Lights", "Fog Machine", "Confetti Cannon", "Bubble Machine", "Photobooth", "Name Board", "Character Cutout", "Return Gifts"]}})
+
+    # Seed demo WhatsApp conversations
+    await _seed_wa(db)
 
 
 @app.on_event("shutdown")

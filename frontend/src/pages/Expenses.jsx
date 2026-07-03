@@ -88,7 +88,7 @@ export default function Expenses() {
 
       {show && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <form onSubmit={submit} className="bg-white w-full max-w-md rounded-3xl p-6 space-y-3">
+          <form onSubmit={submit} className="bg-white w-full max-w-md rounded-3xl p-6 pb-24 sm:pb-6 max-h-[92vh] overflow-y-auto space-y-3">
             <h2 className="font-display text-2xl font-bold">New Expense</h2>
             <input required type="date" data-testid="exp-date" value={form.date} onChange={(e) => setForm({...form, date: e.target.value})} className="w-full border border-black/10 rounded-xl px-4 py-2.5" />
             <select data-testid="exp-cat" value={form.category} onChange={(e) => setForm({...form, category: e.target.value})} className="w-full border border-black/10 rounded-xl px-4 py-2.5">
