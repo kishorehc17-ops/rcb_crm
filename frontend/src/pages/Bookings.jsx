@@ -2,24 +2,31 @@ import React, { useEffect, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import api from "@/api";
 import { toast } from "sonner";
-import { Trash2, Edit3, MessageCircle, FileText, X, Plus, Search, Eye, Upload } from "lucide-react";
+import { Trash2, Edit3, MessageCircle, FileText, X, Plus, Search, Eye, Upload, Link2, QrCode, History, Copy, Printer, Download, RefreshCw } from "lucide-react";
 
-const STATUSES = ["Inquiry", "Pending", "Confirmed", "In Progress", "Completed", "Cancelled"];
+const STATUSES = ["Pending", "Confirmed", "In Progress", "Completed", "Cancelled"];
 
-const statusColor = (s) => ({
-  "Inquiry": "bg-black/10 text-black",
+const bookingStatusColor = (s) => ({
   "Pending": "bg-[#FFE5E8] text-[#E63946]",
-  "Confirmed": "bg-green-100 text-green-700",
-  "In Progress": "bg-blue-100 text-blue-700",
-  "Completed": "bg-black text-white",
+  "Confirmed": "bg-blue-100 text-blue-700",
+  "In Progress": "bg-amber-100 text-amber-700",
+  "Completed": "bg-green-100 text-green-700",
   "Cancelled": "bg-red-100 text-red-700",
+  "Inquiry": "bg-black/10 text-black",
+}[s] || "bg-black/10 text-black");
+
+const paymentStatusColor = (s) => ({
+  "Advance Pending": "bg-red-100 text-red-700",
+  "Partial Paid": "bg-orange-100 text-orange-700",
+  "Advance Received": "bg-amber-100 text-amber-700",
+  "Fully Paid": "bg-green-100 text-green-700",
 }[s] || "bg-black/10 text-black");
 
 const emptyForm = {
   customer_name: "", mobile: "", event_date: "", event_time: "18:00",
   location: "", theme: "", theme_photo: "", package_id: "", package_name: "",
   selected_addons: [],
-  special_requirements: "", status: "Inquiry", total_amount: 0, advance_paid: 0,
+  special_requirements: "", status: "Pending", total_amount: 0, advance_paid: 0, advance_amount: 2000,
 };
 
 export default function Bookings() {
@@ -30,6 +37,10 @@ export default function Bookings() {
   const [editingId, setEditingId] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [qrBooking, setQrBooking] = useState(null);
+  const [historyBooking, setHistoryBooking] = useState(null);
+  const [history, setHistory] = useState({ payments: [], totals: {} });
+  const [reviewUrl, setReviewUrl] = useState("");
 
   const BACKEND = process.env.REACT_APP_BACKEND_URL;
   const photoUrl = (p) => (p && p.startsWith("http") ? p : p ? `${BACKEND}${p}` : "");
@@ -67,7 +78,11 @@ export default function Bookings() {
   useEffect(() => {
     load();
     api.get("/packages", { params: { active_only: true } }).then((r) => setPackages(r.data));
+    api.get("/config/review-url").then((r) => setReviewUrl(r.data.google_review_url)).catch(() => {});
     if (params.get("new")) setShowForm(true);
+    // Auto-poll for status sync every 10s
+    const iv = setInterval(load, 10000);
+    return () => clearInterval(iv);
   }, []);
 
   const submit = async (e) => {
@@ -132,19 +147,105 @@ export default function Bookings() {
     window.open(`https://wa.me/${num}?text=${msg}`, "_blank");
   };
 
-  const sendPaymentLink = async (b) => {
+  const sendAdvanceLink = async (b) => {
     try {
-      const res = await api.post(`/payments/create-link/${b.id}`);
-      const url = res.data.url;
-      toast.success("Payment link created");
-      const balance = Number(b.total_amount) - Number(b.advance_paid);
-      const msg = encodeURIComponent(`Hi ${b.customer_name}, please pay ₹${balance} for booking ${b.booking_number}: ${url}`);
+      let url = b.advance_link_url;
+      if (!url) {
+        const res = await api.post(`/bookings/${b.id}/regenerate-advance-link`);
+        url = res.data.url;
+      }
+      const msg = encodeURIComponent(
+        `Hi ${b.customer_name}, thanks for choosing RCB Events! Please pay the ₹${Number(b.advance_amount || 2000).toLocaleString("en-IN")} advance for booking ${b.booking_number}: ${url}`
+      );
       const num = b.mobile.replace(/\D/g, "");
       window.open(`https://wa.me/${num}?text=${msg}`, "_blank");
+      toast.success("Advance link sent via WhatsApp");
       load();
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to create payment link");
+      toast.error(err.response?.data?.detail || "Failed to send link");
     }
+  };
+
+  const regenerateAdvanceLink = async (b) => {
+    try {
+      await api.post(`/bookings/${b.id}/regenerate-advance-link`);
+      toast.success("New advance link generated");
+      load();
+    } catch (err) {
+      toast.error("Regenerate failed");
+    }
+  };
+
+  const copyLink = (url) => {
+    navigator.clipboard.writeText(url);
+    toast.success("Link copied");
+  };
+
+  const openQR = async (b) => {
+    if (!b.balance_qr_url) {
+      // auto-generate on first open if balance>0
+      try {
+        const res = await api.post(`/bookings/${b.id}/generate-balance-qr`);
+        b = { ...b, balance_qr_url: res.data.image_url, balance_qr_payment_url: res.data.payment_url, balance_qr_id: res.data.id };
+        load();
+      } catch (err) {
+        toast.error(err.response?.data?.detail || "QR unavailable");
+        return;
+      }
+    }
+    setQrBooking(b);
+  };
+
+  const shareQR = (b) => {
+    const url = b.balance_qr_payment_url || "";
+    const balance = Number(b.total_amount) - Number(b.advance_paid);
+    const msg = encodeURIComponent(
+      `Hi ${b.customer_name}, please pay balance ₹${balance.toLocaleString("en-IN")} for ${b.booking_number}: ${url}`
+    );
+    const num = b.mobile.replace(/\D/g, "");
+    window.open(`https://wa.me/${num}?text=${msg}`, "_blank");
+  };
+
+  const downloadQR = (b) => {
+    const a = document.createElement("a");
+    a.href = b.balance_qr_url;
+    a.download = `qr-${b.booking_number}.png`;
+    a.click();
+  };
+
+  const printQR = (b) => {
+    const w = window.open("", "_blank", "width=400,height=600");
+    if (!w) return;
+    const balance = Number(b.total_amount) - Number(b.advance_paid);
+    w.document.write(`
+      <html><head><title>QR - ${b.booking_number}</title></head>
+      <body style="text-align:center;font-family:sans-serif;padding:24px">
+        <h2>RCB Events</h2>
+        <p><b>${b.customer_name}</b><br/>${b.booking_number}</p>
+        <img src="${b.balance_qr_url}" style="width:280px;height:280px"/>
+        <h3>Balance: ₹${balance.toLocaleString("en-IN")}</h3>
+        <p style="font-size:11px;color:#666">Scan to pay via UPI · Powered by Razorpay</p>
+        <script>window.onload=()=>window.print()</script>
+      </body></html>`);
+    w.document.close();
+  };
+
+  const openHistory = async (b) => {
+    try {
+      const res = await api.get(`/bookings/${b.id}/payment-history`);
+      setHistory({ payments: res.data.payments, totals: res.data.totals });
+      setHistoryBooking(b);
+    } catch (e) {
+      toast.error("Failed to load history");
+    }
+  };
+
+  const sendThankYou = (b) => {
+    const msg = encodeURIComponent(
+      `Hi ${b.customer_name}, Thank you for choosing RCB Events! We hope you loved the ${b.theme || 'decoration'}. Would you take a moment to leave a Google review? ${reviewUrl || ''}`
+    );
+    const num = b.mobile.replace(/\D/g, "");
+    window.open(`https://wa.me/${num}?text=${msg}`, "_blank");
   };
 
   const syncPayment = async (b) => {
@@ -153,7 +254,7 @@ export default function Bookings() {
       if (res.data.reconciled > 0) {
         toast.success(`Synced ₹${res.data.reconciled} from Razorpay`);
       } else {
-        toast.info(`Razorpay status: ${res.data.status} · amount paid: ₹${res.data.amount_paid}`);
+        toast.info(`Statuses: ${JSON.stringify(res.data.statuses)}`);
       }
       load();
     } catch (err) {
@@ -209,80 +310,82 @@ export default function Bookings() {
         <table className="w-full">
           <thead className="bg-black/[0.02] text-xs uppercase tracking-widest text-black/50">
             <tr>
-              <th className="text-left px-6 py-4">Booking #</th>
-              <th className="text-left px-6 py-4">Customer</th>
-              <th className="text-left px-6 py-4">Event</th>
-              <th className="text-left px-6 py-4">Theme</th>
-              <th className="text-left px-6 py-4">Package</th>
-              <th className="text-left px-6 py-4">Amount</th>
-              <th className="text-left px-6 py-4">Status</th>
-              <th className="text-right px-6 py-4">Actions</th>
+              <th className="text-left px-5 py-4">Booking #</th>
+              <th className="text-left px-5 py-4">Customer</th>
+              <th className="text-left px-5 py-4">Event</th>
+              <th className="text-left px-5 py-4">Package</th>
+              <th className="text-left px-5 py-4">Amount</th>
+              <th className="text-left px-5 py-4">Booking</th>
+              <th className="text-left px-5 py-4">Payment</th>
+              <th className="text-right px-5 py-4">Actions</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && (
               <tr><td colSpan={8} className="text-center py-12 text-black/50">No bookings found.</td></tr>
             )}
-            {filtered.map((b) => (
+            {filtered.map((b) => {
+              const balance = Number(b.total_amount) - Number(b.advance_paid);
+              const bStatus = b.booking_status || b.status;
+              const pStatus = b.payment_status || "Advance Pending";
+              return (
               <tr key={b.id} className="border-t border-black/5 hover:bg-black/[0.01]">
-                <td className="px-6 py-4 font-mono text-xs text-black/60">{b.booking_number}</td>
-                <td className="px-6 py-4">
+                <td className="px-5 py-4 font-mono text-xs text-black/60">{b.booking_number}</td>
+                <td className="px-5 py-4">
                   <p className="font-semibold text-black">{b.customer_name}</p>
                   <p className="text-xs text-black/50">{b.mobile}</p>
                 </td>
-                <td className="px-6 py-4">
+                <td className="px-5 py-4">
                   <p className="text-sm text-black">{b.event_date}</p>
                   <p className="text-xs text-black/50">{b.event_time}</p>
                 </td>
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-2.5">
-                    {b.theme_photo ? (
-                      <img src={photoUrl(b.theme_photo)} alt={b.theme} className="w-10 h-10 rounded-xl object-cover border border-black/10 flex-shrink-0" onError={(e) => { e.target.style.display = 'none'; }} />
-                    ) : (
-                      <div className="w-10 h-10 rounded-xl bg-[#FFE5E8] flex items-center justify-center flex-shrink-0 text-[#E63946] font-bold text-sm">
-                        {(b.theme || "?")[0].toUpperCase()}
-                      </div>
-                    )}
-                    <p className="text-sm font-semibold text-black">{b.theme || "—"}</p>
-                  </div>
-                </td>
-                <td className="px-6 py-4">
+                <td className="px-5 py-4">
                   {b.package_name && (
                     <p className="text-sm font-bold text-black">{b.package_name}</p>
                   )}
                   {b.selected_addons && b.selected_addons.length > 0 ? (
                     <div className="flex flex-wrap gap-1 mt-1.5">
-                      {b.selected_addons.slice(0, 3).map((a) => (
+                      {b.selected_addons.slice(0, 2).map((a) => (
                         <span key={a} className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-[#FFE5E8] text-[#E63946]">{a}</span>
                       ))}
-                      {b.selected_addons.length > 3 && (
-                        <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-black/5 text-black/60">+{b.selected_addons.length - 3}</span>
+                      {b.selected_addons.length > 2 && (
+                        <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-black/5 text-black/60">+{b.selected_addons.length - 2}</span>
                       )}
                     </div>
                   ) : (
                     !b.package_name && <span className="text-xs text-black/40">—</span>
                   )}
                 </td>
-                <td className="px-6 py-4">
+                <td className="px-5 py-4">
                   <p className="text-sm font-bold text-black">₹{Number(b.total_amount).toLocaleString("en-IN")}</p>
-                  <p className="text-xs text-black/50">Bal: ₹{(Number(b.total_amount) - Number(b.advance_paid)).toLocaleString("en-IN")}</p>
+                  <p className="text-[10px] text-black/50">Paid ₹{Number(b.advance_paid).toLocaleString("en-IN")}</p>
+                  <p className="text-[10px] text-[#E63946] font-semibold">Bal ₹{balance.toLocaleString("en-IN")}</p>
                 </td>
-                <td className="px-6 py-4">
-                  <span className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full ${statusColor(b.status)}`}>{b.status}</span>
+                <td className="px-5 py-4">
+                  <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full ${bookingStatusColor(bStatus)}`}>{bStatus}</span>
                 </td>
-                <td className="px-6 py-4">
-                  <div className="flex items-center justify-end gap-1">
-                    <button onClick={() => setViewing(b)} data-testid={`view-${b.id}`} title="View" className="p-2 rounded-lg hover:bg-black/5"><Eye size={16} /></button>
-                    <button onClick={() => sendPaymentLink(b)} data-testid={`pay-link-${b.id}`} title="Send Payment Link" className="p-2 rounded-lg hover:bg-yellow-50 text-yellow-700 font-bold text-sm w-8 h-8 flex items-center justify-center">₹</button>
-                    <button onClick={() => syncPayment(b)} data-testid={`sync-pay-${b.id}`} title="Sync Payment from Razorpay" className="p-2 rounded-lg hover:bg-blue-50 text-blue-600 font-bold text-xs w-8 h-8 flex items-center justify-center">↻</button>
-                    <button onClick={() => wa(b.mobile, b.customer_name)} data-testid={`wa-${b.id}`} title="WhatsApp" className="p-2 rounded-lg hover:bg-green-50 text-green-600"><MessageCircle size={16} /></button>
-                    <button onClick={() => navigate(`/invoice/${b.id}`)} data-testid={`invoice-${b.id}`} title="Invoice" className="p-2 rounded-lg hover:bg-black/5"><FileText size={16} /></button>
-                    <button onClick={() => edit(b)} data-testid={`edit-${b.id}`} title="Edit" className="p-2 rounded-lg hover:bg-black/5"><Edit3 size={16} /></button>
-                    <button onClick={() => del(b.id)} data-testid={`delete-${b.id}`} title="Delete" className="p-2 rounded-lg hover:bg-red-50 text-[#E63946]"><Trash2 size={16} /></button>
+                <td className="px-5 py-4">
+                  <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full ${paymentStatusColor(pStatus)}`}>{pStatus}</span>
+                </td>
+                <td className="px-5 py-4">
+                  <div className="flex items-center justify-end gap-1 flex-wrap">
+                    <button onClick={() => setViewing(b)} data-testid={`view-${b.id}`} title="View" className="p-1.5 rounded-lg hover:bg-black/5"><Eye size={14} /></button>
+                    {pStatus !== "Fully Paid" && (
+                      <button onClick={() => sendAdvanceLink(b)} data-testid={`advance-link-${b.id}`} title="Send Advance Link" className="p-1.5 rounded-lg hover:bg-yellow-50 text-yellow-700"><Link2 size={14} /></button>
+                    )}
+                    {balance > 0 && Number(b.advance_paid) > 0 && (
+                      <button onClick={() => openQR(b)} data-testid={`qr-${b.id}`} title="View Balance QR" className="p-1.5 rounded-lg hover:bg-blue-50 text-blue-600"><QrCode size={14} /></button>
+                    )}
+                    <button onClick={() => openHistory(b)} data-testid={`history-${b.id}`} title="Payment History" className="p-1.5 rounded-lg hover:bg-black/5"><History size={14} /></button>
+                    <button onClick={() => syncPayment(b)} data-testid={`sync-pay-${b.id}`} title="Sync from Razorpay" className="p-1.5 rounded-lg hover:bg-blue-50 text-blue-600"><RefreshCw size={14} /></button>
+                    <button onClick={() => wa(b.mobile, b.customer_name)} data-testid={`wa-${b.id}`} title="WhatsApp" className="p-1.5 rounded-lg hover:bg-green-50 text-green-600"><MessageCircle size={14} /></button>
+                    <button onClick={() => navigate(`/invoice/${b.id}`)} data-testid={`invoice-${b.id}`} title="Invoice" className="p-1.5 rounded-lg hover:bg-black/5"><FileText size={14} /></button>
+                    <button onClick={() => edit(b)} data-testid={`edit-${b.id}`} title="Edit" className="p-1.5 rounded-lg hover:bg-black/5"><Edit3 size={14} /></button>
+                    <button onClick={() => del(b.id)} data-testid={`delete-${b.id}`} title="Delete" className="p-1.5 rounded-lg hover:bg-red-50 text-[#E63946]"><Trash2 size={14} /></button>
                   </div>
                 </td>
               </tr>
-            ))}
+            );})}
           </tbody>
         </table>
       </div>
@@ -290,14 +393,21 @@ export default function Bookings() {
       {/* Mobile cards */}
       <div className="md:hidden space-y-3">
         {filtered.length === 0 && <p className="text-center py-12 text-black/50">No bookings found.</p>}
-        {filtered.map((b) => (
+        {filtered.map((b) => {
+          const balance = Number(b.total_amount) - Number(b.advance_paid);
+          const bStatus = b.booking_status || b.status;
+          const pStatus = b.payment_status || "Advance Pending";
+          return (
           <div key={b.id} className="bg-white border border-black/5 rounded-2xl p-4 shadow-sm">
             <div className="flex justify-between items-start mb-3">
               <div className="min-w-0">
                 <p className="font-semibold text-black">{b.customer_name}</p>
                 <p className="text-xs text-black/50">{b.mobile} · {b.booking_number}</p>
               </div>
-              <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full ${statusColor(b.status)}`}>{b.status}</span>
+              <div className="flex flex-col gap-1 items-end">
+                <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-1 rounded-full ${bookingStatusColor(bStatus)}`}>{bStatus}</span>
+                <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-1 rounded-full ${paymentStatusColor(pStatus)}`}>{pStatus}</span>
+              </div>
             </div>
             <div className="flex items-center gap-3 mb-3">
               {b.theme_photo ? (
@@ -313,31 +423,27 @@ export default function Bookings() {
                 <p className="text-xs text-black/50">{b.event_date} · {b.event_time}</p>
               </div>
             </div>
-            {(b.package_name || (b.selected_addons && b.selected_addons.length > 0)) && (
-              <div className="mb-3 p-3 rounded-xl bg-black/[0.02]">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-black/40">Package</p>
-                {b.package_name && <p className="text-sm font-bold text-black">{b.package_name}</p>}
-                {b.selected_addons && b.selected_addons.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-1.5">
-                    {b.selected_addons.map((a) => (
-                      <span key={a} className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-[#FFE5E8] text-[#E63946]">{a}</span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            <p className="text-sm font-bold text-black">₹{Number(b.total_amount).toLocaleString("en-IN")}</p>
-            <div className="grid grid-cols-4 gap-1.5 mt-3">
-              <button onClick={() => setViewing(b)} data-testid={`m-view-${b.id}`} className="bg-black text-white rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><Eye size={14} /> View</button>
-              <button onClick={() => wa(b.mobile, b.customer_name)} className="bg-green-50 text-green-700 rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><MessageCircle size={14} /> WA</button>
-              <button onClick={() => sendPaymentLink(b)} data-testid={`m-pay-${b.id}`} className="bg-yellow-50 text-yellow-700 rounded-full py-2 text-xs font-bold flex items-center justify-center">₹ Pay</button>
-              <button onClick={() => syncPayment(b)} data-testid={`m-sync-${b.id}`} className="bg-blue-50 text-blue-600 rounded-full py-2 text-xs font-bold flex items-center justify-center">↻ Sync</button>
-              <button onClick={() => navigate(`/invoice/${b.id}`)} data-testid={`m-inv-${b.id}`} className="bg-black/5 rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><FileText size={14} /> Invoice</button>
-              <button onClick={() => edit(b)} className="bg-black/5 rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><Edit3 size={14} /> Edit</button>
-              <button onClick={() => del(b.id)} className="col-span-2 bg-red-50 text-[#E63946] rounded-full py-2 text-xs font-semibold flex items-center justify-center gap-1"><Trash2 size={14} /> Delete</button>
+            <div className="grid grid-cols-3 gap-1 mb-3 p-2 rounded-xl bg-black/[0.02] text-center">
+              <div><p className="text-[9px] uppercase text-black/40 font-bold">Total</p><p className="text-sm font-bold">₹{Number(b.total_amount).toLocaleString("en-IN")}</p></div>
+              <div><p className="text-[9px] uppercase text-black/40 font-bold">Paid</p><p className="text-sm font-bold text-green-600">₹{Number(b.advance_paid).toLocaleString("en-IN")}</p></div>
+              <div><p className="text-[9px] uppercase text-black/40 font-bold">Balance</p><p className="text-sm font-bold text-[#E63946]">₹{balance.toLocaleString("en-IN")}</p></div>
+            </div>
+            <div className="grid grid-cols-4 gap-1.5">
+              <button onClick={() => setViewing(b)} data-testid={`m-view-${b.id}`} className="bg-black text-white rounded-full py-2 text-[10px] font-semibold flex items-center justify-center gap-1"><Eye size={12} /> View</button>
+              {pStatus !== "Fully Paid" && (
+                <button onClick={() => sendAdvanceLink(b)} data-testid={`m-adv-${b.id}`} className="bg-yellow-50 text-yellow-700 rounded-full py-2 text-[10px] font-bold flex items-center justify-center gap-1"><Link2 size={12} /> Advance</button>
+              )}
+              {balance > 0 && Number(b.advance_paid) > 0 && (
+                <button onClick={() => openQR(b)} data-testid={`m-qr-${b.id}`} className="bg-blue-50 text-blue-700 rounded-full py-2 text-[10px] font-bold flex items-center justify-center gap-1"><QrCode size={12} /> QR</button>
+              )}
+              <button onClick={() => openHistory(b)} data-testid={`m-hist-${b.id}`} className="bg-black/5 rounded-full py-2 text-[10px] font-semibold flex items-center justify-center gap-1"><History size={12} /> History</button>
+              <button onClick={() => wa(b.mobile, b.customer_name)} className="bg-green-50 text-green-700 rounded-full py-2 text-[10px] font-semibold flex items-center justify-center gap-1"><MessageCircle size={12} /> WA</button>
+              <button onClick={() => syncPayment(b)} data-testid={`m-sync-${b.id}`} className="bg-blue-50 text-blue-600 rounded-full py-2 text-[10px] font-bold flex items-center justify-center gap-1"><RefreshCw size={12} /> Sync</button>
+              <button onClick={() => navigate(`/invoice/${b.id}`)} data-testid={`m-inv-${b.id}`} className="bg-black/5 rounded-full py-2 text-[10px] font-semibold flex items-center justify-center gap-1"><FileText size={12} /> Invoice</button>
+              <button onClick={() => edit(b)} className="bg-black/5 rounded-full py-2 text-[10px] font-semibold flex items-center justify-center gap-1"><Edit3 size={12} /> Edit</button>
             </div>
           </div>
-        ))}
+        );})}
       </div>
 
       {/* Form modal */}
@@ -423,11 +529,14 @@ export default function Bookings() {
               <Field label="Total Amount (₹)">
                 <input type="number" data-testid="form-total" value={form.total_amount} onChange={(e) => setForm({...form, total_amount: e.target.value})} className={inputCls} />
               </Field>
+              <Field label="Advance Target (₹)">
+                <input type="number" data-testid="form-advance-target" value={form.advance_amount} onChange={(e) => setForm({...form, advance_amount: e.target.value})} className={inputCls} placeholder="2000" />
+              </Field>
               <Field label="Advance Paid (₹)">
                 <input type="number" data-testid="form-advance" value={form.advance_paid} onChange={(e) => setForm({...form, advance_paid: e.target.value})} className={inputCls} />
               </Field>
-              <Field label="Status">
-                <select data-testid="form-status" value={form.status} onChange={(e) => setForm({...form, status: e.target.value})} className={inputCls}>
+              <Field label="Booking Status">
+                <select data-testid="form-status" value={form.status} onChange={(e) => setForm({...form, status: e.target.value, booking_status: e.target.value})} className={inputCls}>
                   {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               </Field>
@@ -464,8 +573,11 @@ export default function Bookings() {
             </div>
 
             <div className="grid grid-cols-2 gap-4 mb-6">
-              <Info label="Status">
-                <span className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full inline-block ${statusColor(viewing.status)}`}>{viewing.status}</span>
+              <Info label="Booking Status">
+                <span className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full inline-block ${bookingStatusColor(viewing.booking_status || viewing.status)}`}>{viewing.booking_status || viewing.status}</span>
+              </Info>
+              <Info label="Payment Status">
+                <span className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full inline-block ${paymentStatusColor(viewing.payment_status || "Advance Pending")}`}>{viewing.payment_status || "Advance Pending"}</span>
               </Info>
               <Info label="Mobile">{viewing.mobile}</Info>
               <Info label="Event Date">{viewing.event_date}</Info>
@@ -474,6 +586,7 @@ export default function Bookings() {
               <Info label="Theme">{viewing.theme || "—"}</Info>
               <Info label="Package">{viewing.package_name || "—"}</Info>
               <Info label="Total Amount">₹{Number(viewing.total_amount).toLocaleString("en-IN")}</Info>
+              <Info label="Advance Target">₹{Number(viewing.advance_amount || 2000).toLocaleString("en-IN")}</Info>
               <Info label="Advance Paid">₹{Number(viewing.advance_paid).toLocaleString("en-IN")}</Info>
               <Info label="Balance" full>
                 <span className="text-[#E63946] font-bold">₹{(Number(viewing.total_amount) - Number(viewing.advance_paid)).toLocaleString("en-IN")}</span>
@@ -487,15 +600,107 @@ export default function Bookings() {
                   </div>
                 </Info>
               )}
+              {viewing.advance_link_url && (
+                <Info label="Advance Payment Link" full>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <a href={viewing.advance_link_url} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline break-all">{viewing.advance_link_url}</a>
+                    <button onClick={() => copyLink(viewing.advance_link_url)} className="p-1 hover:bg-black/5 rounded"><Copy size={12} /></button>
+                  </div>
+                </Info>
+              )}
               {viewing.special_requirements && <Info label="Special Requirements" full>{viewing.special_requirements}</Info>}
               <Info label="Created" full>{new Date(viewing.created_at).toLocaleString()}</Info>
             </div>
 
             <div className="flex flex-wrap gap-2 justify-end pt-4 border-t border-black/5">
+              {(viewing.payment_status !== "Fully Paid") && (
+                <button data-testid="view-adv-btn" onClick={() => sendAdvanceLink(viewing)} className="px-4 py-2 rounded-full bg-yellow-50 text-yellow-700 font-semibold text-sm flex items-center gap-2"><Link2 size={14} /> Send Advance</button>
+              )}
+              {(Number(viewing.total_amount) - Number(viewing.advance_paid)) > 0 && Number(viewing.advance_paid) > 0 && (
+                <button data-testid="view-qr-btn" onClick={() => { openQR(viewing); setViewing(null); }} className="px-4 py-2 rounded-full bg-blue-50 text-blue-700 font-semibold text-sm flex items-center gap-2"><QrCode size={14} /> View QR</button>
+              )}
+              <button data-testid="view-hist-btn" onClick={() => { openHistory(viewing); setViewing(null); }} className="px-4 py-2 rounded-full bg-black/5 font-semibold text-sm flex items-center gap-2"><History size={14} /> History</button>
+              {viewing.booking_status === "Completed" && (
+                <button data-testid="view-thanks-btn" onClick={() => sendThankYou(viewing)} className="px-4 py-2 rounded-full bg-pink-50 text-pink-700 font-semibold text-sm flex items-center gap-2"><MessageCircle size={14} /> Thank + Review</button>
+              )}
               <button data-testid="view-wa-btn" onClick={() => wa(viewing.mobile, viewing.customer_name)} className="px-4 py-2 rounded-full bg-green-50 text-green-700 font-semibold text-sm flex items-center gap-2"><MessageCircle size={14} /> WhatsApp</button>
               <button data-testid="view-invoice-btn" onClick={() => navigate(`/invoice/${viewing.id}`)} className="px-4 py-2 rounded-full bg-black/5 text-black font-semibold text-sm flex items-center gap-2"><FileText size={14} /> Invoice</button>
               <button data-testid="view-edit-btn" onClick={() => { edit(viewing); setViewing(null); }} className="px-4 py-2 rounded-full bg-black text-white font-semibold text-sm flex items-center gap-2"><Edit3 size={14} /> Edit</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Balance QR modal */}
+      {qrBooking && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" data-testid="qr-modal">
+          <div className="bg-white w-full max-w-md rounded-3xl p-6 pb-24 sm:pb-6 max-h-[92vh] overflow-y-auto">
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#E63946]">Balance Payment QR</p>
+                <h3 className="font-display text-xl font-bold">{qrBooking.customer_name}</h3>
+                <p className="text-xs text-black/50 font-mono">{qrBooking.booking_number}</p>
+              </div>
+              <button onClick={() => setQrBooking(null)} className="p-2 rounded-full hover:bg-black/5"><X size={20} /></button>
+            </div>
+            <div className="flex flex-col items-center py-4">
+              {qrBooking.balance_qr_url ? (
+                <img src={qrBooking.balance_qr_url} alt="QR" className="w-64 h-64 border border-black/10 rounded-2xl p-2 bg-white" data-testid="qr-image" />
+              ) : (
+                <div className="w-64 h-64 flex items-center justify-center text-black/40 border border-dashed border-black/20 rounded-2xl">Generating…</div>
+              )}
+              <p className="mt-4 text-2xl font-black text-[#E63946]">₹{(Number(qrBooking.total_amount) - Number(qrBooking.advance_paid)).toLocaleString("en-IN")}</p>
+              <p className="text-xs text-black/50">Scan with any UPI app · Razorpay</p>
+              {qrBooking.balance_qr_payment_url && (
+                <a href={qrBooking.balance_qr_payment_url} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline mt-2 break-all text-center">{qrBooking.balance_qr_payment_url}</a>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <button data-testid="qr-share" onClick={() => shareQR(qrBooking)} className="bg-green-50 text-green-700 rounded-full py-2.5 font-semibold text-sm flex items-center justify-center gap-2"><MessageCircle size={14} /> Share on WhatsApp</button>
+              <button data-testid="qr-download" onClick={() => downloadQR(qrBooking)} className="bg-black/5 rounded-full py-2.5 font-semibold text-sm flex items-center justify-center gap-2"><Download size={14} /> Download</button>
+              <button data-testid="qr-print" onClick={() => printQR(qrBooking)} className="bg-black/5 rounded-full py-2.5 font-semibold text-sm flex items-center justify-center gap-2"><Printer size={14} /> Print</button>
+              <button data-testid="qr-copy" onClick={() => copyLink(qrBooking.balance_qr_payment_url || "")} className="bg-black/5 rounded-full py-2.5 font-semibold text-sm flex items-center justify-center gap-2"><Copy size={14} /> Copy Link</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment history modal */}
+      {historyBooking && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" data-testid="history-modal">
+          <div className="bg-white w-full max-w-lg rounded-3xl p-6 pb-24 sm:pb-6 max-h-[92vh] overflow-y-auto">
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#E63946]">Payment History</p>
+                <h3 className="font-display text-xl font-bold">{historyBooking.customer_name}</h3>
+                <p className="text-xs text-black/50 font-mono">{historyBooking.booking_number}</p>
+              </div>
+              <button onClick={() => setHistoryBooking(null)} className="p-2 rounded-full hover:bg-black/5"><X size={20} /></button>
+            </div>
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              <div className="p-3 rounded-xl bg-black/[0.02]"><p className="text-[9px] uppercase font-bold text-black/40">Total</p><p className="font-bold">₹{Number(history.totals?.total_amount || 0).toLocaleString("en-IN")}</p></div>
+              <div className="p-3 rounded-xl bg-green-50"><p className="text-[9px] uppercase font-bold text-green-700">Paid</p><p className="font-bold text-green-700">₹{Number(history.totals?.total_paid || 0).toLocaleString("en-IN")}</p></div>
+              <div className="p-3 rounded-xl bg-red-50"><p className="text-[9px] uppercase font-bold text-[#E63946]">Balance</p><p className="font-bold text-[#E63946]">₹{Number(history.totals?.balance || 0).toLocaleString("en-IN")}</p></div>
+            </div>
+            {history.payments.length === 0 ? (
+              <p className="text-center py-8 text-black/40 text-sm">No payments recorded yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {history.payments.map((p) => (
+                  <div key={p.id} className="border border-black/5 rounded-xl p-3 flex justify-between items-start">
+                    <div>
+                      <p className="text-sm font-semibold">₹{Number(p.amount).toLocaleString("en-IN")} · <span className="text-xs text-black/60">{p.method}</span></p>
+                      <p className="text-[10px] text-black/50">{new Date(p.created_at).toLocaleString()}</p>
+                      {p.receipt_no && <p className="text-[10px] text-black/50 font-mono">Receipt: {p.receipt_no}</p>}
+                      {p.note && <p className="text-[10px] text-black/60 mt-1">{p.note}</p>}
+                    </div>
+                    <span className="text-[9px] font-bold uppercase tracking-widest px-2 py-1 rounded-full bg-black/5">
+                      {p.source || "manual"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

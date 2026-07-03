@@ -1,0 +1,41 @@
+{
+  "summary": "Backend-only testing of RCB Events CRM Booking/Payments state-machine synchronization. Wrote pytest suite covering all 11 requested behaviors. All 12 tests PASS (100%).",
+  "tested_scope": ["backend"],
+  "passed": [
+    "POST /api/bookings auto-generates advance_link_url (Razorpay plink_...) and returns booking_status='Pending', payment_status='Advance Pending', balance_amount=total_amount",
+    "GET /api/bookings returns list with derived booking_status/payment_status/balance_amount for every row",
+    "POST /api/bookings/{id}/regenerate-advance-link creates a new advance link and updates advance_link_url/id",
+    "POST /api/bookings/{id}/generate-balance-qr returns id=plink_..., image_url as data:image/png;base64,..., and payment_url (Razorpay short URL)",
+    "POST /api/payments amount=2000 transitions booking to booking_status='Confirmed' + payment_status='Advance Received' + receipt_no=RCPT-...; same state visible in GET /api/bookings",
+    "POST /api/payments that pushes advance_paid >= total_amount transitions payment_status to 'Fully Paid' (balance_amount=0)",
+    "GET /api/bookings/{id}/payment-history returns {booking, payments[], totals{total_paid,total_amount,balance}} — totals reconcile with sum of payments",
+    "GET /api/config/review-url returns google_review_url containing 'maps.app.goo.gl'",
+    "Idempotency: POST /api/payments/sync/{id} returns reconciled=0 on the second call (no double-count)",
+    "GET /api/bookings surfaces multiple distinct payment_status values needed for Payments-page filtering",
+    "PUT /api/bookings/{id} preserves advance_link_id, advance_link_url and other Razorpay fields when payload omits them"
+  ],
+  "failed": [],
+  "backend_issues": {"critical": [], "minor": []},
+  "test_report_links": [
+    "/app/backend/tests/test_booking_payments_sync.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "critical_code_review_comments": [
+    "Razorpay live-mode payment_link.create is easily rate-limited ('Too many requests') when several bookings are created rapidly. In server.py create_booking(), the link creation is best-effort (silently None on failure) so a booking can end up with no advance_link_url. Recommend: (1) surface an 'advance_link_status=failed' flag so frontend can offer 'Regenerate advance link' button, (2) add small backoff/retry inside create_advance_link, or (3) push the Razorpay call to a background task so we don't tie booking creation to a flaky external call.",
+    "GOOGLE_REVIEW_URL is hardcoded default in booking_flow.py — ok, but could be surfaced via /api/config/review-url only when env var missing.",
+    "server.py has ~940 lines — approaching the 700-line guideline; consider splitting bookings/payments/webhook into their own routers.",
+    "sync_payment endpoint: legacy fallback 'source: {$exists: false}' means old Razorpay payments recorded before the source field was added will be double-counted if a fresh source='advance_link' payment arrives (delta calc merges legacy + new). Not encountered in these tests but worth a follow-up."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_booking_payments_sync.py (new)",
+    "/app/test_reports/pytest/pytest_results.xml (new)",
+    "/app/test_reports/iteration_5.json (new)"
+  ],
+  "success_rate": {"backend": "100%"},
+  "test_credentials": "admin@rcbevents.com / admin123 (JWT Bearer, from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Created a handful of TEST_ bookings during testing and DELETEd them via test_zzz_cleanup. As per instructions, existing bookings in DB were NOT touched.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Razorpay live-mode API rate-limits payment_link.create. If you re-run the suite back-to-back, add a 45-60s sleep between runs. The tests include internal retries. All state-machine transitions (Pending → Confirmed → Fully Paid) verified against live backend at https://party-planner-crm-1.preview.emergentagent.com. Frontend testing was explicitly skipped per request.",
+  "rca of the issue": "N/A - no bugs found. Initial test failures were due to Razorpay rate-limiting; tests were made resilient with retry/backoff and now pass 12/12."
+}

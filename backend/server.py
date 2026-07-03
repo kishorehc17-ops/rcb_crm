@@ -122,9 +122,12 @@ class BookingIn(BaseModel):
     package_name: Optional[str] = None
     selected_addons: List[str] = []
     special_requirements: Optional[str] = ""
-    status: str = "Inquiry"
+    status: str = "Pending"  # legacy compat; real state lives in booking_status/payment_status
+    booking_status: Optional[str] = None  # Pending, Confirmed, In Progress, Completed, Cancelled
+    payment_status: Optional[str] = None  # Advance Pending, Advance Received, Partial Paid, Fully Paid
     total_amount: float = 0
     advance_paid: float = 0
+    advance_amount: float = 2000  # editable target advance
 
 
 class PackageIn(BaseModel):
@@ -253,6 +256,17 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
 
 
 # ---------- Bookings ----------
+from booking_flow import (
+    apply_derived as _apply_derived,
+    create_advance_link as _create_advance_link,
+    create_balance_qr as _create_balance_qr,
+    apply_payment as _apply_payment,
+    sweep_event_day as _sweep_event_day,
+    build_wa_link as _wa_link,
+    GOOGLE_REVIEW_URL as _GOOGLE_REVIEW_URL,
+)
+
+
 def _booking_number():
     return "RCB-" + datetime.now(timezone.utc).strftime("%y%m%d") + "-" + uuid.uuid4().hex[:5].upper()
 
@@ -260,6 +274,8 @@ def _booking_number():
 @api_router.get("/bookings")
 async def list_bookings(user: dict = Depends(get_current_user)):
     docs = await db.bookings.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    for d in docs:
+        _apply_derived(d)
     return docs
 
 
@@ -270,6 +286,16 @@ async def create_booking(data: BookingIn, user: dict = Depends(get_current_user)
     doc["booking_number"] = _booking_number()
     doc["created_at"] = now_iso()
     doc["updated_at"] = now_iso()
+    if not doc.get("advance_amount"):
+        doc["advance_amount"] = 2000.0
+    # Auto-generate advance payment link (best-effort — won't block booking creation)
+    if rzp_client and float(doc.get("advance_amount") or 0) > 0 and doc.get("mobile"):
+        link = await _create_advance_link(rzp_client, doc)
+        if link:
+            doc["advance_link_id"] = link["id"]
+            doc["advance_link_url"] = link["url"]
+            doc["advance_link_status"] = link["status"]
+    _apply_derived(doc)
     await db.bookings.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -280,6 +306,7 @@ async def get_booking(booking_id: str, user: dict = Depends(get_current_user)):
     doc = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Booking not found")
+    _apply_derived(doc)
     return doc
 
 
@@ -287,10 +314,18 @@ async def get_booking(booking_id: str, user: dict = Depends(get_current_user)):
 async def update_booking(booking_id: str, data: BookingIn, user: dict = Depends(get_current_user)):
     upd = data.model_dump()
     upd["updated_at"] = now_iso()
-    result = await db.bookings.update_one({"id": booking_id}, {"$set": upd})
-    if result.matched_count == 0:
+    # Preserve link/QR fields if not provided
+    existing = await db.bookings.find_one({"id": booking_id})
+    if not existing:
         raise HTTPException(status_code=404, detail="Booking not found")
+    for k in ("advance_link_id", "advance_link_url", "advance_link_status",
+              "balance_qr_id", "balance_qr_url", "balance_qr_status", "booking_number"):
+        if k not in upd and k in existing:
+            upd[k] = existing[k]
+    _apply_derived(upd)
+    await db.bookings.update_one({"id": booking_id}, {"$set": upd})
     doc = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    _apply_derived(doc)
     return doc
 
 
@@ -300,6 +335,69 @@ async def delete_booking(booking_id: str, user: dict = Depends(get_current_user)
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Booking not found")
     return {"ok": True}
+
+
+@api_router.post("/bookings/{booking_id}/regenerate-advance-link")
+async def regenerate_advance_link(booking_id: str, user: dict = Depends(get_current_user)):
+    if not rzp_client:
+        raise HTTPException(status_code=500, detail="Razorpay not configured")
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    link = await _create_advance_link(rzp_client, b)
+    if not link:
+        raise HTTPException(status_code=500, detail="Failed to create link")
+    await db.bookings.update_one({"id": booking_id}, {"$set": {
+        "advance_link_id": link["id"],
+        "advance_link_url": link["url"],
+        "advance_link_status": link["status"],
+        "updated_at": now_iso(),
+    }})
+    return link
+
+
+@api_router.post("/bookings/{booking_id}/generate-balance-qr")
+async def generate_balance_qr(booking_id: str, user: dict = Depends(get_current_user)):
+    if not rzp_client:
+        raise HTTPException(status_code=500, detail="Razorpay not configured")
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    qr = await _create_balance_qr(rzp_client, b)
+    if not qr:
+        raise HTTPException(status_code=400, detail="No balance due or QR create failed")
+    await db.bookings.update_one({"id": booking_id}, {"$set": {
+        "balance_qr_id": qr["id"],
+        "balance_qr_url": qr["image_url"],        # PNG data URL for <img>
+        "balance_qr_payment_url": qr["payment_url"],  # Razorpay short URL
+        "balance_qr_status": qr["status"],
+        "updated_at": now_iso(),
+    }})
+    return qr
+
+
+@api_router.get("/bookings/{booking_id}/payment-history")
+async def payment_history(booking_id: str, user: dict = Depends(get_current_user)):
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    pays = await db.payments.find({"booking_id": booking_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    _apply_derived(b)
+    total_paid = sum(float(p.get("amount") or 0) for p in pays)
+    return {
+        "booking": b,
+        "payments": pays,
+        "totals": {
+            "total_paid": total_paid,
+            "total_amount": float(b.get("total_amount") or 0),
+            "balance": float(b.get("balance_amount") or 0),
+        },
+    }
+
+
+@api_router.get("/config/review-url")
+async def get_review_url(user: dict = Depends(get_current_user)):
+    return {"google_review_url": _GOOGLE_REVIEW_URL}
 
 
 # ---------- Packages ----------
@@ -346,17 +444,15 @@ async def list_payments(booking_id: Optional[str] = None, user: dict = Depends(g
 
 @api_router.post("/payments")
 async def create_payment(data: PaymentIn, user: dict = Depends(get_current_user)):
-    doc = data.model_dump()
-    doc["id"] = str(uuid.uuid4())
-    doc["created_at"] = now_iso()
-    await db.payments.insert_one(doc)
-    # Update booking advance
-    booking = await db.bookings.find_one({"id": data.booking_id})
-    if booking:
-        new_advance = (booking.get("advance_paid") or 0) + data.amount
-        await db.bookings.update_one({"id": data.booking_id}, {"$set": {"advance_paid": new_advance, "updated_at": now_iso()}})
-    doc.pop("_id", None)
-    return doc
+    updated = await _apply_payment(
+        db, data.booking_id, float(data.amount), method=data.method,
+        note=data.note or "", source="manual",
+    )
+    if not updated:
+        raise HTTPException(404, "Booking not found")
+    pay = await db.payments.find_one({"booking_id": data.booking_id}, {"_id": 0},
+                                     sort=[("created_at", -1)])
+    return pay
 
 
 # ---------- Expenses ----------
@@ -590,77 +686,146 @@ async def rzp_webhook(request: Request):
 
     payload = body.get("payload", {}) or {}
     pl_entity = (payload.get("payment_link") or {}).get("entity") or {}
+    qr_entity = (payload.get("qr_code") or {}).get("entity") or {}
     pay_entity = (payload.get("payment") or {}).get("entity") or {}
 
     booking_id = None
     amount = 0.0
-    link_id = pl_entity.get("id") or pay_entity.get("payment_link_id")
+    source = "webhook"
 
-    # Prefer payment_link entity data (has notes and amount_paid)
+    # Payment-link events (advance link OR balance link)
     if pl_entity:
-        booking_id = (pl_entity.get("notes") or {}).get("booking_id")
+        notes = pl_entity.get("notes") or {}
+        booking_id = notes.get("booking_id")
         amount = float(pl_entity.get("amount_paid") or pl_entity.get("amount") or 0) / 100
+        # differentiate advance vs balance link via `purpose` note
+        source = "balance_qr" if notes.get("purpose") == "balance" else "advance_link"
+
+    # QR-code events (only if Razorpay native QR API works — rare in test)
+    if not booking_id and qr_entity:
+        booking_id = (qr_entity.get("notes") or {}).get("booking_id")
+        source = "balance_qr"
+
+    # Fall back to payment entity for booking_id + amount
     if not amount and pay_entity:
         amount = float(pay_entity.get("amount") or 0) / 100
     if not booking_id:
         booking_id = (pay_entity.get("notes") or {}).get("booking_id")
-    # Fallback: look up booking by stored payment_link_id
+
+    # Fallback: look up booking by stored link id (advance) or link stored as balance QR id
+    link_id = pl_entity.get("id") or pay_entity.get("payment_link_id")
+    qr_id = qr_entity.get("id")
     if not booking_id and link_id:
-        b = await db.bookings.find_one({"payment_link_id": link_id}, {"id": 1})
+        b = await db.bookings.find_one({"advance_link_id": link_id}, {"id": 1})
         if b:
             booking_id = b.get("id")
-
-    logger.info(f"Webhook parsed: booking_id={booking_id}, amount={amount}, link_id={link_id}")
-
-    if ev in ("payment_link.paid", "payment.captured") and booking_id and amount > 0:
-        b = await db.bookings.find_one({"id": booking_id})
+            source = "advance_link"
+        else:
+            b = await db.bookings.find_one({"balance_qr_id": link_id}, {"id": 1})
+            if b:
+                booking_id = b.get("id")
+                source = "balance_qr"
+    if not booking_id and qr_id:
+        b = await db.bookings.find_one({"balance_qr_id": qr_id}, {"id": 1})
         if b:
-            # Idempotency: skip if we already recorded this exact razorpay payment id
-            rzp_pay_id = pay_entity.get("id")
-            if rzp_pay_id and await db.payments.find_one({"rzp_payment_id": rzp_pay_id}):
-                logger.info(f"Webhook: duplicate payment id {rzp_pay_id}, skipping")
-                return {"ok": True, "duplicate": True}
-            new_adv = float(b.get("advance_paid") or 0) + amount
+            booking_id = b.get("id")
+            source = "balance_qr"
+
+    logger.info(f"Webhook parsed: booking_id={booking_id}, amount={amount}, source={source}")
+
+    paid_events = ("payment_link.paid", "payment.captured", "qr_code.credited")
+    if ev in paid_events and booking_id and amount > 0:
+        rzp_pay_id = pay_entity.get("id")
+        await _apply_payment(
+            db, booking_id, amount, method="Razorpay",
+            note=f"Auto via webhook ({ev})", rzp_pay_id=rzp_pay_id, source=source,
+        )
+        # If advance link paid, auto-generate the balance QR
+        if source == "advance_link" and rzp_client:
+            b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+            if b and float(b.get("advance_paid") or 0) < float(b.get("total_amount") or 0):
+                if not b.get("balance_qr_id"):
+                    qr = await _create_balance_qr(rzp_client, b)
+                    if qr:
+                        await db.bookings.update_one({"id": booking_id}, {"$set": {
+                            "balance_qr_id": qr["id"],
+                            "balance_qr_url": qr["image_url"],
+                            "balance_qr_status": qr["status"],
+                        }})
+        # Update link/qr status snapshot
+        if pl_entity:
             await db.bookings.update_one({"id": booking_id}, {"$set": {
-                "advance_paid": new_adv, "payment_link_status": "paid",
-                "updated_at": now_iso()}})
-            await db.payments.insert_one({"id": str(uuid.uuid4()),
-                "booking_id": booking_id, "amount": amount, "method": "Razorpay",
-                "note": f"Auto via webhook ({ev})", "rzp_payment_id": rzp_pay_id,
-                "created_at": now_iso()})
-            logger.info(f"Webhook: booking {booking_id} advance updated to {new_adv}")
+                "advance_link_status": pl_entity.get("status", "paid"),
+            }})
+        if qr_entity:
+            await db.bookings.update_one({"id": booking_id}, {"$set": {
+                "balance_qr_status": qr_entity.get("status", "active"),
+            }})
     return {"ok": True}
 
 
 @api_router.post("/payments/sync/{booking_id}")
 async def sync_payment(booking_id: str, user: dict = Depends(get_current_user)):
-    """Manually fetch Razorpay payment link status and reconcile advance_paid."""
+    """Manually fetch Razorpay payment link + QR status and reconcile payments."""
     if not rzp_client:
         raise HTTPException(status_code=500, detail="Razorpay not configured")
     b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
-    if not b or not b.get("payment_link_id"):
-        raise HTTPException(status_code=404, detail="No payment link on this booking")
-    try:
-        link = rzp_client.payment_link.fetch(b["payment_link_id"])
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Razorpay error: {e}")
-    amount_paid = float(link.get("amount_paid", 0)) / 100
-    status = link.get("status", "created")
-    # Only add difference between what Razorpay says was paid and what we've already recorded
-    already_recorded = 0.0
-    async for p in db.payments.find({"booking_id": booking_id, "method": "Razorpay"}):
-        already_recorded += float(p.get("amount", 0))
-    delta = amount_paid - already_recorded
-    if delta > 0:
-        new_adv = float(b.get("advance_paid") or 0) + delta
-        await db.bookings.update_one({"id": booking_id}, {"$set": {
-            "advance_paid": new_adv, "payment_link_status": status, "updated_at": now_iso()}})
-        await db.payments.insert_one({"id": str(uuid.uuid4()), "booking_id": booking_id,
-            "amount": delta, "method": "Razorpay", "note": "Reconciled via sync",
-            "created_at": now_iso()})
-    else:
-        await db.bookings.update_one({"id": booking_id}, {"$set": {"payment_link_status": status}})
-    return {"status": status, "amount_paid": amount_paid, "reconciled": delta}
+    if not b:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if not (b.get("advance_link_id") or b.get("balance_qr_id") or b.get("payment_link_id")):
+        raise HTTPException(status_code=404, detail="No Razorpay link/QR on this booking")
+
+    total_reconciled = 0.0
+    statuses = {}
+    # Sync advance payment link
+    adv_link_id = b.get("advance_link_id") or b.get("payment_link_id")
+    if adv_link_id:
+        try:
+            link = rzp_client.payment_link.fetch(adv_link_id)
+            amount_paid = float(link.get("amount_paid", 0)) / 100
+            statuses["advance_link"] = link.get("status", "created")
+            already = 0.0
+            async for p in db.payments.find({"booking_id": booking_id, "source": "advance_link"}):
+                already += float(p.get("amount", 0))
+            # Legacy payments without source field
+            if already == 0:
+                async for p in db.payments.find({"booking_id": booking_id, "method": "Razorpay", "source": {"$exists": False}}):
+                    already += float(p.get("amount", 0))
+            delta = amount_paid - already
+            if delta > 0:
+                await _apply_payment(db, booking_id, delta, method="Razorpay",
+                                     note="Reconciled via sync (advance)", source="advance_link")
+                total_reconciled += delta
+            await db.bookings.update_one({"id": booking_id}, {"$set": {
+                "advance_link_status": statuses["advance_link"],
+            }})
+        except Exception as e:
+            logger.warning(f"advance link sync failed: {e}")
+
+    # Sync balance QR
+    qr_id = b.get("balance_qr_id")
+    if qr_id:
+        try:
+            qr = rzp_client.qrcode.fetch(qr_id)
+            amount_paid = float(qr.get("payments_amount_received", 0)) / 100
+            statuses["balance_qr"] = qr.get("status", "active")
+            already = 0.0
+            async for p in db.payments.find({"booking_id": booking_id, "source": "balance_qr"}):
+                already += float(p.get("amount", 0))
+            delta = amount_paid - already
+            if delta > 0:
+                await _apply_payment(db, booking_id, delta, method="Razorpay",
+                                     note="Reconciled via sync (balance QR)", source="balance_qr")
+                total_reconciled += delta
+            await db.bookings.update_one({"id": booking_id}, {"$set": {
+                "balance_qr_status": statuses["balance_qr"],
+            }})
+        except Exception as e:
+            logger.warning(f"balance QR sync failed: {e}")
+
+    updated = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    _apply_derived(updated)
+    return {"reconciled": total_reconciled, "statuses": statuses, "booking": updated}
 
 
 # ---------- Health ----------
@@ -750,6 +915,25 @@ async def on_startup():
 
     # Seed demo WhatsApp conversations
     await _seed_wa(db)
+
+    # Background sweep: flip Confirmed -> In Progress and Fully Paid -> Completed
+    # for bookings whose event_date is today. Runs hourly.
+    import asyncio
+
+    async def _bg_sweep():
+        while True:
+            try:
+                await _sweep_event_day(db)
+            except Exception as e:
+                logger.warning(f"sweep_event_day failed: {e}")
+            await asyncio.sleep(3600)  # every hour
+
+    asyncio.create_task(_bg_sweep())
+    # Also run once immediately at startup
+    try:
+        await _sweep_event_day(db)
+    except Exception as e:
+        logger.warning(f"initial sweep failed: {e}")
 
 
 @app.on_event("shutdown")
