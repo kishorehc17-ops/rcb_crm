@@ -67,25 +67,29 @@ Build a comprehensive CRM for **RCB Events**, a birthday and event decoration co
 ## Environment Variables
 - `MONGO_URL`, `DB_NAME`, `JWT_SECRET`
 - `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`
-- `EMERGENT_LLM_KEY` (universal key for Claude/OpenAI/Gemini)
+- `EMERGENT_LLM_KEY` (universal key for Claude/OpenAI/Gemini **AND Emergent Object Storage**)
 - `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` (empty — plug in later)
 - `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `GOOGLE_REVIEW_URL`
 
-## Backlog / Deferred
-### P0
-- Migrate `/api/upload` from local disk → Emergent Object Storage (data loss on restart)
+## File Uploads
+- All new theme photos uploaded via `/api/upload` are stored in **Emergent Object Storage** (`rcbevents/uploads/{user_id}/{uuid}.{ext}` path convention)
+- Served via `/api/files/{path:path}` with Bearer token OR `?auth=<token>` query param (for `<img src>`)
+- MongoDB `files` collection tracks references with `is_deleted` soft-delete flag
+- Legacy `/api/uploads/*` static mount kept for existing bookings' images
 
+## Backlog / Deferred
 ### P1
 - **Wire live Meta WhatsApp Cloud API** (creds pending from user)
 - Reports & Analytics Dashboard (Sales, Expense, Profit)
 - Meta Ads / Website lead auto-ingestion webhooks
-- Split server.py (940 lines) into routers per module
+- Split server.py (960 lines) into routers per module
 
 ### P2
 - Customer Portal + Staff Attendance App
 - Google Calendar sync
 - AI Chatbot / WhatsApp AI assistant
 - Inventory management
+- Auto Thank-You WhatsApp + Google Review on Completed transition
 
 ## Known Trade-offs
 - Razorpay QR-code API returns 404 in test mode → we generate a Razorpay payment link and render its short_url as a base64 PNG QR locally (using `qrcode` python lib). Webhook events still flow through Razorpay so payments auto-reconcile.

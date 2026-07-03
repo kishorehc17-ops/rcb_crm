@@ -42,7 +42,16 @@ export default function Bookings() {
   const [reviewUrl, setReviewUrl] = useState("");
 
   const BACKEND = process.env.REACT_APP_BACKEND_URL;
-  const photoUrl = (p) => (p && p.startsWith("http") ? p : p ? `${BACKEND}${p}` : "");
+  const photoUrl = (p) => {
+    if (!p) return "";
+    if (p.startsWith("http")) return p;
+    // For new /api/files/ paths, append auth token as query param so <img> tags work
+    if (p.startsWith("/api/files/")) {
+      const token = localStorage.getItem("rcb_token");
+      return `${BACKEND}${p}${token ? `?auth=${encodeURIComponent(token)}` : ""}`;
+    }
+    return `${BACKEND}${p}`;
+  };
 
   const handleUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -564,7 +573,7 @@ export default function Bookings() {
             <div className="flex justify-between items-start mb-4 pb-4 border-b border-black/5">
               <div className="flex items-start gap-3">
                 {viewing.theme_photo && (
-                  <img src={viewing.theme_photo} alt={viewing.theme} className="w-16 h-16 rounded-2xl object-cover border border-black/10" onError={(e) => { e.target.style.display = 'none'; }} />
+                  <img src={photoUrl(viewing.theme_photo)} alt={viewing.theme} className="w-16 h-16 rounded-2xl object-cover border border-black/10" onError={(e) => { e.target.style.display = 'none'; }} />
                 )}
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#E63946] mb-1">Booking Details</p>

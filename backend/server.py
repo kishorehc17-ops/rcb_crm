@@ -822,20 +822,73 @@ async def root():
 
 
 # ---------- File Upload ----------
-UPLOAD_DIR = ROOT_DIR / "uploads"
+# ---------- File Upload (Emergent Object Storage) ----------
+from storage import init_storage as _init_storage, put_object as _put_object, get_object as _get_object, build_path as _build_path, MIME as _MIME
+from fastapi import Header, Query
+from fastapi.responses import Response
+
+UPLOAD_DIR = ROOT_DIR / "uploads"  # legacy local dir (backwards compat for old bookings)
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 
 @api_router.post("/upload")
 async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    ext = os.path.splitext(file.filename or "img.jpg")[1].lower() or ".jpg"
-    if ext not in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
+    ext = os.path.splitext(file.filename or "img.jpg")[1].lower().lstrip(".") or "jpg"
+    if ext not in {"jpg", "jpeg", "png", "gif", "webp"}:
         raise HTTPException(status_code=400, detail="Only image files are allowed")
-    filename = f"{uuid.uuid4().hex}{ext}"
-    dest = UPLOAD_DIR / filename
     contents = await file.read()
-    dest.write_bytes(contents)
-    return {"url": f"/api/uploads/{filename}"}
+    if len(contents) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image must be under 5MB")
+    content_type = _MIME.get(ext, "application/octet-stream")
+    path = _build_path(user["id"], ext)
+    try:
+        result = _put_object(path, contents, content_type)
+    except Exception as e:
+        logger.exception("Object storage upload failed")
+        raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
+    stored_path = result.get("path", path)
+    await db.files.insert_one({
+        "id": str(uuid.uuid4()),
+        "storage_path": stored_path,
+        "original_filename": file.filename or "",
+        "content_type": content_type,
+        "size": result.get("size", len(contents)),
+        "owner_id": user["id"],
+        "is_deleted": False,
+        "created_at": now_iso(),
+    })
+    # Frontend-consumable URL — served by /api/files/{path:path}
+    return {"url": f"/api/files/{stored_path}"}
+
+
+@api_router.get("/files/{path:path}")
+async def download_file(
+    path: str,
+    authorization: Optional[str] = Header(default=None),
+    auth: Optional[str] = Query(default=None),
+):
+    """Serve a file from Emergent Object Storage. Auth via Bearer header OR
+    `?auth=<token>` query param (needed for <img src>)."""
+    token = None
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1]
+    elif auth:
+        token = auth
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    record = await db.files.find_one({"storage_path": path, "is_deleted": False})
+    if not record:
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        data, ct = _get_object(path)
+    except Exception as e:
+        logger.exception("Object storage download failed")
+        raise HTTPException(status_code=500, detail=f"Storage download failed: {e}")
+    return Response(content=data, media_type=record.get("content_type") or ct)
 
 
 # ---------- Include router ----------
@@ -867,6 +920,13 @@ async def on_startup():
     await db.users.create_index("email", unique=True)
     await db.bookings.create_index("event_date")
     await db.leads.create_index("stage")
+    await db.files.create_index("storage_path")
+
+    # Init Emergent Object Storage session (best-effort — /api/upload will retry on demand)
+    try:
+        _init_storage()
+    except Exception as e:
+        logger.warning(f"Emergent Object Storage init failed at startup: {e}")
 
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@rcbevents.com").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
