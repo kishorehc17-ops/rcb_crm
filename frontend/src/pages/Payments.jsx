@@ -7,19 +7,17 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-const PAYMENT_STATUS_ORDER = ["Advance Pending", "Partial Paid", "Advance Received", "Fully Paid"];
+const PAYMENT_STATUS_ORDER = ["Advance Pending", "Partial Paid", "Fully Paid"];
 
 const paymentStatusColor = (s) => ({
   "Advance Pending": "bg-red-100 text-red-700",
-  "Partial Paid": "bg-orange-100 text-orange-700",
-  "Advance Received": "bg-amber-100 text-amber-700",
+  "Partial Paid": "bg-amber-100 text-amber-700",
   "Fully Paid": "bg-green-100 text-green-700",
 }[s] || "bg-black/10 text-black");
 
 const paymentStatusDot = (s) => ({
   "Advance Pending": "🔴",
   "Partial Paid": "🟠",
-  "Advance Received": "🟠",
   "Fully Paid": "🟢",
 }[s] || "");
 
@@ -157,10 +155,14 @@ export default function Payments() {
   const syncPayment = async (b) => {
     try {
       const res = await api.post(`/payments/sync/${b.id}`);
+      const st = res.data.statuses || {};
+      const parts = [];
+      if (st.advance_link) parts.push(`Advance: ${st.advance_link}`);
+      if (st.balance_qr) parts.push(`Balance: ${st.balance_qr}`);
       if (res.data.reconciled > 0) {
-        toast.success(`Synced ₹${res.data.reconciled}`);
+        toast.success(`Synced ₹${res.data.reconciled} · ${parts.join(" · ")}`);
       } else {
-        toast.info("No new payments");
+        toast.info(parts.length ? parts.join(" · ") : "No links to sync");
       }
       load();
     } catch (err) {
@@ -258,7 +260,7 @@ export default function Payments() {
                   </td>
                   <td className="px-5 py-4">
                     <div className="flex items-center justify-end gap-1 flex-wrap">
-                      {ps !== "Fully Paid" && (
+                      {ps === "Advance Pending" && (
                         <button onClick={() => sendAdvanceLink(b)} data-testid={`pay-adv-${b.id}`} title="Send Advance Link" className="p-1.5 rounded-lg hover:bg-yellow-50 text-yellow-700"><Link2 size={14} /></button>
                       )}
                       {balance > 0 && Number(b.advance_paid) > 0 && (
@@ -299,7 +301,7 @@ export default function Payments() {
                 <div><p className="text-[9px] uppercase text-black/40 font-bold">Balance</p><p className="text-sm font-bold text-[#E63946]">₹{balance.toLocaleString("en-IN")}</p></div>
               </div>
               <div className="grid grid-cols-3 gap-1.5">
-                {ps !== "Fully Paid" && (
+                {ps === "Advance Pending" && (
                   <button onClick={() => sendAdvanceLink(b)} data-testid={`m-pay-adv-${b.id}`} className="bg-yellow-50 text-yellow-700 rounded-full py-2 text-[10px] font-bold flex items-center justify-center gap-1"><Link2 size={12} /> Advance</button>
                 )}
                 {balance > 0 && Number(b.advance_paid) > 0 && (

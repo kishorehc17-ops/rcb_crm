@@ -17,8 +17,7 @@ const bookingStatusColor = (s) => ({
 
 const paymentStatusColor = (s) => ({
   "Advance Pending": "bg-red-100 text-red-700",
-  "Partial Paid": "bg-orange-100 text-orange-700",
-  "Advance Received": "bg-amber-100 text-amber-700",
+  "Partial Paid": "bg-amber-100 text-amber-700",
   "Fully Paid": "bg-green-100 text-green-700",
 }[s] || "bg-black/10 text-black");
 
@@ -251,10 +250,14 @@ export default function Bookings() {
   const syncPayment = async (b) => {
     try {
       const res = await api.post(`/payments/sync/${b.id}`);
+      const st = res.data.statuses || {};
+      const parts = [];
+      if (st.advance_link) parts.push(`Advance: ${st.advance_link}`);
+      if (st.balance_qr) parts.push(`Balance: ${st.balance_qr}`);
       if (res.data.reconciled > 0) {
-        toast.success(`Synced ₹${res.data.reconciled} from Razorpay`);
+        toast.success(`Synced ₹${res.data.reconciled} · ${parts.join(" · ")}`);
       } else {
-        toast.info(`Statuses: ${JSON.stringify(res.data.statuses)}`);
+        toast.info(parts.length ? parts.join(" · ") : "No links to sync");
       }
       load();
     } catch (err) {
@@ -370,7 +373,7 @@ export default function Bookings() {
                 <td className="px-5 py-4">
                   <div className="flex items-center justify-end gap-1 flex-wrap">
                     <button onClick={() => setViewing(b)} data-testid={`view-${b.id}`} title="View" className="p-1.5 rounded-lg hover:bg-black/5"><Eye size={14} /></button>
-                    {pStatus !== "Fully Paid" && (
+                    {pStatus === "Advance Pending" && (
                       <button onClick={() => sendAdvanceLink(b)} data-testid={`advance-link-${b.id}`} title="Send Advance Link" className="p-1.5 rounded-lg hover:bg-yellow-50 text-yellow-700"><Link2 size={14} /></button>
                     )}
                     {balance > 0 && Number(b.advance_paid) > 0 && (
@@ -430,7 +433,7 @@ export default function Bookings() {
             </div>
             <div className="grid grid-cols-4 gap-1.5">
               <button onClick={() => setViewing(b)} data-testid={`m-view-${b.id}`} className="bg-black text-white rounded-full py-2 text-[10px] font-semibold flex items-center justify-center gap-1"><Eye size={12} /> View</button>
-              {pStatus !== "Fully Paid" && (
+              {pStatus === "Advance Pending" && (
                 <button onClick={() => sendAdvanceLink(b)} data-testid={`m-adv-${b.id}`} className="bg-yellow-50 text-yellow-700 rounded-full py-2 text-[10px] font-bold flex items-center justify-center gap-1"><Link2 size={12} /> Advance</button>
               )}
               {balance > 0 && Number(b.advance_paid) > 0 && (
@@ -613,7 +616,7 @@ export default function Bookings() {
             </div>
 
             <div className="flex flex-wrap gap-2 justify-end pt-4 border-t border-black/5">
-              {(viewing.payment_status !== "Fully Paid") && (
+              {(viewing.payment_status === "Advance Pending" || !viewing.payment_status) && (
                 <button data-testid="view-adv-btn" onClick={() => sendAdvanceLink(viewing)} className="px-4 py-2 rounded-full bg-yellow-50 text-yellow-700 font-semibold text-sm flex items-center gap-2"><Link2 size={14} /> Send Advance</button>
               )}
               {(Number(viewing.total_amount) - Number(viewing.advance_paid)) > 0 && Number(viewing.advance_paid) > 0 && (

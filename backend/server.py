@@ -344,6 +344,8 @@ async def regenerate_advance_link(booking_id: str, user: dict = Depends(get_curr
     b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not b:
         raise HTTPException(status_code=404, detail="Booking not found")
+    if float(b.get("advance_paid") or 0) > 0:
+        raise HTTPException(status_code=400, detail="Advance already received — link cannot be regenerated")
     link = await _create_advance_link(rzp_client, b)
     if not link:
         raise HTTPException(status_code=500, detail="Failed to create link")
@@ -766,7 +768,8 @@ async def rzp_webhook(request: Request):
 
 @api_router.post("/payments/sync/{booking_id}")
 async def sync_payment(booking_id: str, user: dict = Depends(get_current_user)):
-    """Manually fetch Razorpay payment link + QR status and reconcile payments."""
+    """Manually fetch Razorpay advance link + balance link status and reconcile
+    payments for both. Both advance and balance are Razorpay payment_links."""
     if not rzp_client:
         raise HTTPException(status_code=500, detail="Razorpay not configured")
     b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
@@ -777,51 +780,35 @@ async def sync_payment(booking_id: str, user: dict = Depends(get_current_user)):
 
     total_reconciled = 0.0
     statuses = {}
+
+    async def _sync_link(link_id: str, source_key: str, status_key: str):
+        nonlocal total_reconciled
+        if not link_id:
+            return
+        try:
+            link = rzp_client.payment_link.fetch(link_id)
+        except Exception as e:
+            logger.warning(f"{source_key} sync failed: {e}")
+            return
+        amount_paid = float(link.get("amount_paid", 0)) / 100
+        statuses[source_key] = link.get("status", "created")
+        already = 0.0
+        async for p in db.payments.find({"booking_id": booking_id, "source": source_key}):
+            already += float(p.get("amount", 0))
+        delta = amount_paid - already
+        if delta > 0:
+            await _apply_payment(db, booking_id, delta, method="Razorpay",
+                                 note=f"Reconciled via sync ({source_key})", source=source_key)
+            total_reconciled += delta
+        await db.bookings.update_one({"id": booking_id}, {"$set": {
+            status_key: statuses[source_key],
+        }})
+
     # Sync advance payment link
     adv_link_id = b.get("advance_link_id") or b.get("payment_link_id")
-    if adv_link_id:
-        try:
-            link = rzp_client.payment_link.fetch(adv_link_id)
-            amount_paid = float(link.get("amount_paid", 0)) / 100
-            statuses["advance_link"] = link.get("status", "created")
-            already = 0.0
-            async for p in db.payments.find({"booking_id": booking_id, "source": "advance_link"}):
-                already += float(p.get("amount", 0))
-            # Legacy payments without source field
-            if already == 0:
-                async for p in db.payments.find({"booking_id": booking_id, "method": "Razorpay", "source": {"$exists": False}}):
-                    already += float(p.get("amount", 0))
-            delta = amount_paid - already
-            if delta > 0:
-                await _apply_payment(db, booking_id, delta, method="Razorpay",
-                                     note="Reconciled via sync (advance)", source="advance_link")
-                total_reconciled += delta
-            await db.bookings.update_one({"id": booking_id}, {"$set": {
-                "advance_link_status": statuses["advance_link"],
-            }})
-        except Exception as e:
-            logger.warning(f"advance link sync failed: {e}")
-
-    # Sync balance QR
-    qr_id = b.get("balance_qr_id")
-    if qr_id:
-        try:
-            qr = rzp_client.qrcode.fetch(qr_id)
-            amount_paid = float(qr.get("payments_amount_received", 0)) / 100
-            statuses["balance_qr"] = qr.get("status", "active")
-            already = 0.0
-            async for p in db.payments.find({"booking_id": booking_id, "source": "balance_qr"}):
-                already += float(p.get("amount", 0))
-            delta = amount_paid - already
-            if delta > 0:
-                await _apply_payment(db, booking_id, delta, method="Razorpay",
-                                     note="Reconciled via sync (balance QR)", source="balance_qr")
-                total_reconciled += delta
-            await db.bookings.update_one({"id": booking_id}, {"$set": {
-                "balance_qr_status": statuses["balance_qr"],
-            }})
-        except Exception as e:
-            logger.warning(f"balance QR sync failed: {e}")
+    await _sync_link(adv_link_id, "advance_link", "advance_link_status")
+    # Sync balance link (stored under balance_qr_id — also a payment_link id)
+    await _sync_link(b.get("balance_qr_id"), "balance_qr", "balance_qr_status")
 
     updated = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     _apply_derived(updated)

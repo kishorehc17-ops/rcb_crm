@@ -34,43 +34,41 @@ def now_iso() -> str:
 
 def compute_payment_status(booking: dict) -> str:
     advance_paid = float(booking.get("advance_paid") or 0)
-    advance_amount = float(booking.get("advance_amount") or 0) or 2000.0
     total = float(booking.get("total_amount") or 0)
     if total > 0 and advance_paid >= total:
         return "Fully Paid"
     if advance_paid <= 0:
         return "Advance Pending"
-    if advance_paid < advance_amount:
-        return "Partial Paid"
-    return "Advance Received"
+    return "Partial Paid"
 
 
 def compute_booking_status(booking: dict, today_iso: Optional[str] = None) -> str:
-    """Derive booking_status. Honors an explicit override for Cancelled or
-    Completed if already set."""
+    """Derive booking_status.
+    Rules:
+      - Cancelled stays Cancelled
+      - Fully Paid → Completed (immediate, regardless of event date)
+      - Advance Pending → Pending
+      - Partial Paid + event_date == today → In Progress
+      - Partial Paid + already In Progress → stays In Progress
+      - Partial Paid otherwise → Confirmed
+    """
     current = booking.get("booking_status") or booking.get("status") or "Pending"
     if current == "Cancelled":
         return "Cancelled"
     payment_status = compute_payment_status(booking)
     event_date = booking.get("event_date") or ""
     today = today_iso or datetime.now(timezone.utc).date().isoformat()
-    # Completed: Fully paid AND event is over (event_date <= today) OR current already In Progress
-    if payment_status == "Fully Paid" and event_date and event_date <= today:
+
+    if payment_status == "Fully Paid":
         return "Completed"
-    # If already completed, stay
-    if current == "Completed":
-        return "Completed"
-    # In Progress: event date is today
-    if event_date == today and payment_status in ("Advance Received", "Partial Paid", "Fully Paid"):
+    if payment_status == "Advance Pending":
+        return "Pending"
+    # Partial Paid from here
+    if event_date == today:
         return "In Progress"
-    # In Progress persists once set (event day)
     if current == "In Progress":
         return "In Progress"
-    # Confirmed: Advance Received or better (and event not yet today)
-    if payment_status in ("Advance Received", "Fully Paid"):
-        return "Confirmed"
-    # Otherwise Pending
-    return "Pending"
+    return "Confirmed"
 
 
 def apply_derived(booking: dict) -> dict:
