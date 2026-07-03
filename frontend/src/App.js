@@ -16,6 +16,7 @@ import Staff from "@/pages/Staff";
 import Pipeline from "@/pages/Pipeline";
 import Invoice from "@/pages/Invoice";
 import Users from "@/pages/Users";
+import Reports from "@/pages/Reports";
 
 function App() {
   return (
@@ -40,6 +41,7 @@ function App() {
               <Route path="/vendors" element={<Vendors />} />
               <Route path="/staff" element={<Staff />} />
               <Route path="/pipeline" element={<Pipeline />} />
+              <Route path="/reports" element={<Reports />} />
               <Route path="/users" element={<Users />} />
               <Route path="/invoice/:id" element={<Invoice />} />
             </Route>

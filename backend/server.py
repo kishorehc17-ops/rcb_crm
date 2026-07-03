@@ -255,6 +255,122 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
     }
 
 
+@api_router.get("/reports/overview")
+async def reports_overview(months: int = 6, user: dict = Depends(get_current_user)):
+    """Aggregated reports for sales / expenses / profit / breakdowns."""
+    from collections import defaultdict
+    now = datetime.now(timezone.utc)
+    # Build the last N months' keys as YYYY-MM
+    keys: List[str] = []
+    y, m = now.year, now.month
+    for _ in range(months):
+        keys.append(f"{y:04d}-{m:02d}")
+        m -= 1
+        if m == 0:
+            m = 12
+            y -= 1
+    keys.reverse()
+
+    # Sales = advance_paid grouped by booking created month
+    sales_by_month = defaultdict(float)
+    expenses_by_month = defaultdict(float)
+    async for p in db.payments.find({}, {"amount": 1, "created_at": 1}):
+        ca = (p.get("created_at") or "")[:7]  # YYYY-MM
+        if ca:
+            sales_by_month[ca] += float(p.get("amount") or 0)
+    async for e in db.expenses.find({}, {"amount": 1, "date": 1, "created_at": 1}):
+        # Prefer date field; fall back to created_at
+        d = (e.get("date") or e.get("created_at") or "")[:7]
+        if d:
+            expenses_by_month[d] += float(e.get("amount") or 0)
+
+    monthly = [
+        {
+            "month": k,
+            "sales": round(sales_by_month.get(k, 0), 2),
+            "expenses": round(expenses_by_month.get(k, 0), 2),
+            "profit": round(sales_by_month.get(k, 0) - expenses_by_month.get(k, 0), 2),
+        }
+        for k in keys
+    ]
+
+    # Booking status breakdown
+    status_counts = defaultdict(int)
+    async for b in db.bookings.find({}, {"booking_status": 1, "status": 1}):
+        status_counts[b.get("booking_status") or b.get("status") or "Pending"] += 1
+
+    # Payment status breakdown
+    ps_counts = defaultdict(int)
+    async for b in db.bookings.find({}, {"payment_status": 1, "advance_paid": 1, "total_amount": 1}):
+        paid = float(b.get("advance_paid") or 0)
+        total = float(b.get("total_amount") or 0)
+        ps = b.get("payment_status")
+        if not ps:
+            if total > 0 and paid >= total:
+                ps = "Fully Paid"
+            elif paid <= 0:
+                ps = "Advance Pending"
+            else:
+                ps = "Partial Paid"
+        ps_counts[ps] += 1
+
+    # Expense category breakdown
+    cat_totals = defaultdict(float)
+    async for e in db.expenses.find({}, {"amount": 1, "category": 1}):
+        cat_totals[e.get("category") or "Other"] += float(e.get("amount") or 0)
+    exp_categories = sorted(
+        [{"name": k, "value": round(v, 2)} for k, v in cat_totals.items()],
+        key=lambda x: -x["value"],
+    )
+
+    # Top themes (by booking count)
+    theme_counts = defaultdict(int)
+    async for b in db.bookings.find({}, {"theme": 1}):
+        t = (b.get("theme") or "").strip() or "Unspecified"
+        theme_counts[t] += 1
+    top_themes = sorted(
+        [{"name": k, "count": v} for k, v in theme_counts.items()],
+        key=lambda x: -x["count"],
+    )[:8]
+
+    # Top packages (by count)
+    pkg_counts = defaultdict(int)
+    async for b in db.bookings.find({}, {"package_name": 1}):
+        p = (b.get("package_name") or "").strip() or "None"
+        pkg_counts[p] += 1
+    top_packages = sorted(
+        [{"name": k, "count": v} for k, v in pkg_counts.items()],
+        key=lambda x: -x["count"],
+    )
+
+    # Payment method breakdown
+    method_totals = defaultdict(float)
+    async for p in db.payments.find({}, {"amount": 1, "method": 1}):
+        method_totals[p.get("method") or "Other"] += float(p.get("amount") or 0)
+    payment_methods = sorted(
+        [{"name": k, "value": round(v, 2)} for k, v in method_totals.items()],
+        key=lambda x: -x["value"],
+    )
+
+    # Totals
+    total_sales = sum(sales_by_month.values())
+    total_expenses = sum(expenses_by_month.values())
+    return {
+        "monthly": monthly,
+        "totals": {
+            "sales": round(total_sales, 2),
+            "expenses": round(total_expenses, 2),
+            "profit": round(total_sales - total_expenses, 2),
+        },
+        "booking_status_counts": [{"name": k, "value": v} for k, v in status_counts.items()],
+        "payment_status_counts": [{"name": k, "value": v} for k, v in ps_counts.items()],
+        "expense_categories": exp_categories,
+        "top_themes": top_themes,
+        "top_packages": top_packages,
+        "payment_methods": payment_methods,
+    }
+
+
 # ---------- Bookings ----------
 from booking_flow import (
     apply_derived as _apply_derived,

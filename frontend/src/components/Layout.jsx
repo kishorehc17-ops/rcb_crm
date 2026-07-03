@@ -1,6 +1,6 @@
 import React from "react";
 import { NavLink, useNavigate, Outlet } from "react-router-dom";
-import { LayoutDashboard, Users, Package, Receipt, Wallet, UserCog, Sparkles, LogOut, Shield } from "lucide-react";
+import { LayoutDashboard, Users, Package, Receipt, Wallet, UserCog, Sparkles, LogOut, Shield, BarChart3 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { motion } from "framer-motion";
 
@@ -11,6 +11,7 @@ const allNav = [
   { to: "/packages", label: "Packages", icon: Package, testid: "nav-packages", roles: ["admin", "manager", "sales"] },
   { to: "/payments", label: "Payments", icon: Wallet, testid: "nav-payments", roles: ["admin", "manager"] },
   { to: "/expenses", label: "Expenses", icon: Receipt, testid: "nav-expenses", roles: ["admin", "manager"] },
+  { to: "/reports", label: "Reports", icon: BarChart3, testid: "nav-reports", roles: ["admin", "manager"] },
   { to: "/vendors", label: "Vendors", icon: Users, testid: "nav-vendors", roles: ["admin", "manager"] },
   { to: "/staff", label: "Staff", icon: UserCog, testid: "nav-staff", roles: ["admin", "manager"] },
   { to: "/users", label: "Users", icon: Shield, testid: "nav-users", roles: ["admin"] },

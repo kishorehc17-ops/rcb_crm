@@ -40,6 +40,7 @@ export default function Bookings() {
   const [historyBooking, setHistoryBooking] = useState(null);
   const [history, setHistory] = useState({ payments: [], totals: {} });
   const [reviewUrl, setReviewUrl] = useState("");
+  const [lightbox, setLightbox] = useState(null);  // photo URL to enlarge
 
   const BACKEND = process.env.REACT_APP_BACKEND_URL;
   const photoUrl = (p) => {
@@ -325,6 +326,7 @@ export default function Bookings() {
               <th className="text-left px-5 py-4">Booking #</th>
               <th className="text-left px-5 py-4">Customer</th>
               <th className="text-left px-5 py-4">Event</th>
+              <th className="text-left px-5 py-4">Theme</th>
               <th className="text-left px-5 py-4">Package</th>
               <th className="text-left px-5 py-4">Amount</th>
               <th className="text-left px-5 py-4">Booking</th>
@@ -334,7 +336,7 @@ export default function Bookings() {
           </thead>
           <tbody>
             {filtered.length === 0 && (
-              <tr><td colSpan={8} className="text-center py-12 text-black/50">No bookings found.</td></tr>
+              <tr><td colSpan={9} className="text-center py-12 text-black/50">No bookings found.</td></tr>
             )}
             {filtered.map((b) => {
               const balance = Number(b.total_amount) - Number(b.advance_paid);
@@ -350,6 +352,26 @@ export default function Bookings() {
                 <td className="px-5 py-4">
                   <p className="text-sm text-black">{b.event_date}</p>
                   <p className="text-xs text-black/50">{b.event_time}</p>
+                </td>
+                <td className="px-5 py-4">
+                  <div className="flex items-center gap-2.5">
+                    {b.theme_photo ? (
+                      <button
+                        type="button"
+                        data-testid={`theme-photo-${b.id}`}
+                        onClick={() => setLightbox({ url: photoUrl(b.theme_photo), title: b.theme, subtitle: b.customer_name })}
+                        className="w-11 h-11 rounded-xl overflow-hidden border border-black/10 flex-shrink-0 hover:ring-2 hover:ring-[#E63946] transition-all"
+                        title="Click to enlarge"
+                      >
+                        <img src={photoUrl(b.theme_photo)} alt={b.theme} className="w-full h-full object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
+                      </button>
+                    ) : (
+                      <div className="w-11 h-11 rounded-xl bg-[#FFE5E8] flex items-center justify-center flex-shrink-0 text-[#E63946] font-bold text-sm">
+                        {(b.theme || "?")[0].toUpperCase()}
+                      </div>
+                    )}
+                    <p className="text-sm font-semibold text-black truncate max-w-[140px]" title={b.theme}>{b.theme || "—"}</p>
+                  </div>
                 </td>
                 <td className="px-5 py-4">
                   {b.package_name && (
@@ -423,7 +445,15 @@ export default function Bookings() {
             </div>
             <div className="flex items-center gap-3 mb-3">
               {b.theme_photo ? (
-                <img src={photoUrl(b.theme_photo)} alt={b.theme} className="w-14 h-14 rounded-xl object-cover border border-black/10 flex-shrink-0" onError={(e) => { e.target.style.display = 'none'; }} />
+                <button
+                  type="button"
+                  data-testid={`m-theme-photo-${b.id}`}
+                  onClick={() => setLightbox({ url: photoUrl(b.theme_photo), title: b.theme, subtitle: b.customer_name })}
+                  className="w-14 h-14 rounded-xl overflow-hidden border border-black/10 flex-shrink-0"
+                  title="Tap to enlarge"
+                >
+                  <img src={photoUrl(b.theme_photo)} alt={b.theme} className="w-full h-full object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
+                </button>
               ) : (
                 <div className="w-14 h-14 rounded-xl bg-[#FFE5E8] flex items-center justify-center flex-shrink-0 text-[#E63946] font-bold text-lg">
                   {(b.theme || "?")[0].toUpperCase()}
@@ -573,7 +603,15 @@ export default function Bookings() {
             <div className="flex justify-between items-start mb-4 pb-4 border-b border-black/5">
               <div className="flex items-start gap-3">
                 {viewing.theme_photo && (
-                  <img src={photoUrl(viewing.theme_photo)} alt={viewing.theme} className="w-16 h-16 rounded-2xl object-cover border border-black/10" onError={(e) => { e.target.style.display = 'none'; }} />
+                  <button
+                    type="button"
+                    onClick={() => setLightbox({ url: photoUrl(viewing.theme_photo), title: viewing.theme, subtitle: viewing.customer_name })}
+                    data-testid="view-theme-photo"
+                    className="rounded-2xl overflow-hidden border border-black/10 hover:ring-2 hover:ring-[#E63946] transition-all"
+                    title="Click to enlarge"
+                  >
+                    <img src={photoUrl(viewing.theme_photo)} alt={viewing.theme} className="w-16 h-16 object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
+                  </button>
                 )}
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#E63946] mb-1">Booking Details</p>
@@ -711,6 +749,38 @@ export default function Bookings() {
                     </span>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Photo lightbox */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setLightbox(null)}
+          data-testid="photo-lightbox"
+        >
+          <button
+            onClick={(e) => { e.stopPropagation(); setLightbox(null); }}
+            className="absolute top-5 right-5 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white"
+            data-testid="lightbox-close"
+            aria-label="Close"
+          >
+            <X size={22} />
+          </button>
+          <div className="max-w-6xl w-full max-h-[92vh] flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={lightbox.url}
+              alt={lightbox.title || "Theme"}
+              className="max-w-full max-h-[80vh] object-contain rounded-2xl shadow-2xl"
+              data-testid="lightbox-image"
+            />
+            {(lightbox.title || lightbox.subtitle) && (
+              <div className="mt-4 text-center">
+                {lightbox.title && <p className="text-white font-display text-xl font-bold">{lightbox.title}</p>}
+                {lightbox.subtitle && <p className="text-white/70 text-sm">{lightbox.subtitle}</p>}
               </div>
             )}
           </div>
