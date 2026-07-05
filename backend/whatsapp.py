@@ -188,6 +188,12 @@ class MockIn(BaseModel):
     media_url: Optional[str] = None
 
 
+class SendPackageIn(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    wa_id: str
+    package_id: str
+
+
 def build_router(get_current_user, db):
     """Register routes with an outer dependency on auth + db handle."""
 
@@ -219,38 +225,50 @@ def build_router(get_current_user, db):
         wa_id = _normalize_phone(data.wa_id)
         if not wa_id:
             raise HTTPException(400, "Invalid wa_id")
-        token = os.environ.get("WHATSAPP_ACCESS_TOKEN", "")
-        phone_id = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "")
         wa_msg_id = None
         status = "queued"
-        if token and phone_id:
-            # Live send via Meta Cloud API
-            try:
-                payload = {"messaging_product": "whatsapp", "to": wa_id, "type": data.type}
-                if data.type == "text":
-                    payload["text"] = {"body": data.text}
-                elif data.type == "image":
-                    payload["image"] = {"link": data.media_url, "caption": data.text or ""}
-                async with httpx.AsyncClient(timeout=15) as cli:
-                    r = await cli.post(
-                        f"https://graph.facebook.com/v20.0/{phone_id}/messages",
-                        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-                        json=payload,
-                    )
-                if r.status_code >= 300:
-                    logger.warning(f"WA send failed {r.status_code}: {r.text}")
-                    raise HTTPException(502, f"Meta API error: {r.text[:200]}")
-                body = r.json()
-                wa_msg_id = (body.get("messages") or [{}])[0].get("id")
-                status = "sent"
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.exception("send error")
-                raise HTTPException(500, str(e))
-        else:
-            # Mock mode — just log the outbound message locally
-            status = "sent (mock)"
+        # Provider selection: Deropo (if configured) → Meta Cloud API (if configured) → mock
+        try:
+            from deropo import is_enabled as _deropo_on, send_text as _dsend_text, send_image as _dsend_image
+            if _deropo_on():
+                if data.type == "image":
+                    resp = await _dsend_image(wa_id, data.media_url or "", data.text or "")
+                else:
+                    resp = await _dsend_text(wa_id, data.text or "")
+                if resp.get("ok"):
+                    wa_msg_id = resp.get("provider_id")
+                    status = "sent (deropo)"
+                else:
+                    logger.warning(f"Deropo send failed: {resp.get('error')}")
+                    status = f"failed: {resp.get('error', 'deropo error')[:80]}"
+            else:
+                token = os.environ.get("WHATSAPP_ACCESS_TOKEN", "")
+                phone_id = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "")
+                if token and phone_id:
+                    payload = {"messaging_product": "whatsapp", "to": wa_id, "type": data.type}
+                    if data.type == "text":
+                        payload["text"] = {"body": data.text}
+                    elif data.type == "image":
+                        payload["image"] = {"link": data.media_url, "caption": data.text or ""}
+                    async with httpx.AsyncClient(timeout=15) as cli:
+                        r = await cli.post(
+                            f"https://graph.facebook.com/v20.0/{phone_id}/messages",
+                            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                            json=payload,
+                        )
+                    if r.status_code >= 300:
+                        logger.warning(f"WA send failed {r.status_code}: {r.text}")
+                        raise HTTPException(502, f"Meta API error: {r.text[:200]}")
+                    body = r.json()
+                    wa_msg_id = (body.get("messages") or [{}])[0].get("id")
+                    status = "sent"
+                else:
+                    status = "sent (mock)"
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception("send error")
+            raise HTTPException(500, str(e))
         msg = await _insert_message(db, wa_id, "out", data.text, data.type, data.media_url, wa_msg_id)
         msg["status"] = status
         await db.wa_messages.update_one({"id": msg["id"]}, {"$set": {"status": status}})
@@ -325,6 +343,68 @@ def build_router(get_current_user, db):
         if not result:
             raise HTTPException(400, "Invalid wa_id")
         return result
+
+    @router.post("/send-package")
+    async def send_package(data: SendPackageIn, user: dict = Depends(get_current_user)):
+        """Send a package's images + description + price to a customer via WA."""
+        wa_id = _normalize_phone(data.wa_id)
+        pkg = await db.packages.find_one({"id": data.package_id}, {"_id": 0})
+        if not pkg:
+            raise HTTPException(404, "Package not found")
+        # Compose caption
+        includes = pkg.get("includes") or []
+        addons = pkg.get("addons") or pkg.get("available_addons") or []
+        max_ad = pkg.get("max_addons")
+        parts = [
+            f"*{pkg.get('name', 'Package')}* — ₹{pkg.get('price', 0):,}",
+        ]
+        if includes:
+            parts.append("\n_Includes:_")
+            parts.extend([f"• {x}" for x in includes[:10]])
+        if addons:
+            parts.append(f"\n_Add-ons available_ (pick up to {max_ad or 'any'}):")
+            parts.extend([f"• {x}" for x in addons[:8]])
+        parts.append("\nReply here to book. 🎈")
+        caption = "\n".join(parts)
+
+        # Try to send package cover image(s) — use first if present
+        photos = pkg.get("photos") or ([pkg.get("photo")] if pkg.get("photo") else [])
+        photos = [p for p in photos if p]
+        sent_msgs = []
+        try:
+            from deropo import is_enabled as _deropo_on, send_image as _dsend_image, send_text as _dsend_text
+            if _deropo_on() and photos:
+                # Send first photo with the full caption
+                r = await _dsend_image(wa_id, photos[0], caption)
+                m = await _insert_message(db, wa_id, "out", caption, "image", photos[0], r.get("provider_id"))
+                await db.wa_messages.update_one({"id": m["id"]}, {"$set": {"status": "sent (deropo)" if r.get("ok") else "failed"}})
+                sent_msgs.append(m)
+                # Send extra photos without captions
+                for p in photos[1:3]:
+                    r2 = await _dsend_image(wa_id, p, "")
+                    m2 = await _insert_message(db, wa_id, "out", "[image]", "image", p, r2.get("provider_id"))
+                    sent_msgs.append(m2)
+            else:
+                # Text-only fallback
+                if _deropo_on():
+                    r = await _dsend_text(wa_id, caption)
+                    provider_id = r.get("provider_id")
+                    status = "sent (deropo)" if r.get("ok") else "failed"
+                else:
+                    provider_id = None
+                    status = "sent (mock)"
+                m = await _insert_message(db, wa_id, "out", caption, "text", None, provider_id)
+                await db.wa_messages.update_one({"id": m["id"]}, {"$set": {"status": status}})
+                sent_msgs.append(m)
+        except Exception as e:
+            logger.exception("send_package failed")
+            raise HTTPException(500, str(e))
+        # Refresh conversation
+        convo = await db.wa_conversations.find_one({"wa_id": wa_id})
+        profile_name = (convo or {}).get("profile_name", "")
+        await _upsert_conversation(db, wa_id, profile_name,
+                                   f"📦 Package: {pkg.get('name')}", "out")
+        return {"messages": sent_msgs, "package": pkg.get("name")}
 
     return router
 

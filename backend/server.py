@@ -1011,9 +1011,14 @@ async def download_file(
 app.include_router(api_router)
 
 # ---------- WhatsApp module ----------
-from whatsapp import build_router as _build_wa_router, seed_demo_conversations as _seed_wa
+from whatsapp import build_router as _build_wa_router, seed_demo_conversations as _seed_wa, handle_incoming_message as _wa_handle_incoming
 _wa_router = _build_wa_router(get_current_user, db)
 app.include_router(_wa_router)
+
+# ---------- Deropo WhatsApp provider (incoming webhook) ----------
+from deropo import build_router as _build_deropo_router
+_deropo_router = _build_deropo_router(db, _wa_handle_incoming)
+app.include_router(_deropo_router)
 
 # Serve uploaded files (mounted under /api so kubernetes ingress routes to backend)
 app.mount("/api/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")

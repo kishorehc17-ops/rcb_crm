@@ -88,7 +88,19 @@ export default function Bookings() {
     load();
     api.get("/packages", { params: { active_only: true } }).then((r) => setPackages(r.data));
     api.get("/config/review-url").then((r) => setReviewUrl(r.data.google_review_url)).catch(() => {});
-    if (params.get("new")) setShowForm(true);
+    if (params.get("new")) {
+      setShowForm(true);
+      // Support pre-fill from Pipeline "Create Booking" quick action
+      const pMobile = params.get("prefill_mobile");
+      const pName = params.get("prefill_name");
+      if (pMobile || pName) {
+        setForm((f) => ({
+          ...f,
+          mobile: pMobile || f.mobile,
+          customer_name: pName || f.customer_name,
+        }));
+      }
+    }
     // Auto-poll for status sync every 10s
     const iv = setInterval(load, 10000);
     return () => clearInterval(iv);

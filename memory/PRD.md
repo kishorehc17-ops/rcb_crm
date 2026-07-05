@@ -22,6 +22,20 @@ Build a comprehensive CRM for **RCB Events**, a birthday and event decoration co
 
 ## What's Been Implemented
 
+### 2026-07-05 — Pipeline upgraded to Deropo WhatsApp CRM (this session)
+- **`services/deropo.py`** — full outgoing service (send_text / send_image / send_document / send_video / send_audio / send_buttons / send_list / send_template / mark_as_read) hitting `GET https://api.deropo.com/api/send`
+- **Provider abstraction** in `/api/whatsapp/send`: Deropo (if `DEROPO_API_KEY` set) → Meta Cloud (if `WHATSAPP_ACCESS_TOKEN`) → mock
+- **`POST /api/deropo/webhook`** — parses Deropo `message_received / message_sent / message_delivered / message_read / message_failed` events and reuses the WhatsApp module's `handle_incoming_message` (single-source-of-truth: same `wa_conversations`/`wa_messages`/`leads` collections)
+- **`POST /api/whatsapp/send-package`** — sends a package (image + name + price + includes + addons caption) with one click from the chat
+- **Pipeline UI rewritten** to 3-column pro layout (Deropo/Interakt/WATI style):
+  - LEFT: Conversation list with avatar/name/last-msg/time/unread/stage-pill + search + stage filter
+  - CENTER: WhatsApp-style chat (backdrop, bubbles, image/document previews, ticks: sent ✓ / delivered ✓✓ / read ✓✓ blue / failed ⚠)
+  - RIGHT: Customer profile with booking summary + **Quick Actions**: Create Booking / Open Booking / Send Package / Send Advance Link / Send Balance QR / Invoice, and Internal Notes
+- **Bookings prefill** — `?new=1&prefill_mobile=...&prefill_name=...` opens the existing booking modal with prefilled fields (no code duplication)
+
+### Environment
+- Added: `DEROPO_API_KEY`, `DEROPO_DEVICE_ID` (=675), `DEROPO_BASE_URL` (=https://api.deropo.com/api)
+
 ### 2026-07-03 — WhatsApp Chat + Booking/Payments Sync (this session)
 - **Embedded WhatsApp chat inside Pipeline page** (split view like WhatsApp Web)
   - Left: filterable lead list (stage tabs, search)
