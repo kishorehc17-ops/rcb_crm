@@ -94,14 +94,33 @@ async def parse_lead_details(text: str) -> dict:
 
 async def _ensure_lead(db, wa_id: str, profile_name: str, first_message_text: str) -> dict:
     """Find existing lead by mobile == wa_id; if none, create a new one and try
-    to parse location/date via LLM. Returns the lead dict."""
+    to parse location/date via LLM. Returns the lead dict.
+
+    If an existing lead exists with a placeholder "WA XXXX" name and a real
+    profile_name arrives later, upgrade the lead's name in place.
+    """
     lead = await db.leads.find_one({"mobile": wa_id}, {"_id": 0})
     if lead:
+        current_name = (lead.get("name") or "").strip()
+        is_placeholder = current_name.startswith("WA ") and len(current_name) <= 8
+        clean_profile = (profile_name or "").strip()
+        if is_placeholder and clean_profile:
+            await db.leads.update_one({"id": lead["id"]}, {"$set": {
+                "name": clean_profile,
+                "wa_profile_name": clean_profile,
+            }})
+            # Also update the conversation record
+            await db.wa_conversations.update_one({"wa_id": wa_id}, {"$set": {
+                "profile_name": clean_profile,
+            }})
+            lead["name"] = clean_profile
+            lead["wa_profile_name"] = clean_profile
+            logger.info(f"WA upgraded lead name for {wa_id}: {clean_profile}")
         return lead
     parsed = await parse_lead_details(first_message_text)
     lead = {
         "id": str(uuid.uuid4()),
-        "name": profile_name or f"WA {wa_id[-4:]}",
+        "name": (profile_name or "").strip() or f"WA {wa_id[-4:]}",
         "mobile": wa_id,
         "source": "WhatsApp",
         "stage": "Lead",

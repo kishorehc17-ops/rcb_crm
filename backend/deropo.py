@@ -178,10 +178,20 @@ def parse_webhook(body: dict) -> Optional[dict]:
     text = (data.get("message") or data.get("text") or data.get("body") or "")
     media_url = (data.get("media_url") or data.get("image_url")
                  or data.get("document_url") or data.get("video_url"))
+    # Try many possible name fields (Deropo varies; also nested under `contact`)
+    contact = data.get("contact") if isinstance(data.get("contact"), dict) else {}
+    profile_name = (
+        data.get("name") or data.get("profile_name") or data.get("pushname")
+        or data.get("pushName") or data.get("sender_name") or data.get("senderName")
+        or data.get("contact_name") or data.get("notify_name") or data.get("verified_name")
+        or data.get("chat_name") or data.get("customer_name")
+        or contact.get("name") or contact.get("pushname") or contact.get("verified_name")
+        or ""
+    )
     return {
         "event": ev,
         "wa_id": wa_id,
-        "profile_name": data.get("name") or data.get("profile_name") or "",
+        "profile_name": profile_name,
         "type": msg_type,
         "text": text if isinstance(text, str) else str(text),
         "media_url": media_url,
@@ -201,7 +211,12 @@ def build_router(db, handle_incoming_message):
             body = await request.json()
         except Exception:
             raise HTTPException(400, "Invalid JSON")
-        logger.info(f"Deropo webhook received: keys={list(body.keys())[:10]}")
+        # Log full raw payload once so we can see what Deropo actually sends
+        try:
+            import json as _json
+            logger.info(f"Deropo webhook raw: {_json.dumps(body)[:1000]}")
+        except Exception:
+            logger.info(f"Deropo webhook received: keys={list(body.keys())[:10]}")
         parsed = parse_webhook(body)
         if not parsed:
             return {"ok": True, "ignored": True}

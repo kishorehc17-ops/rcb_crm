@@ -1,0 +1,41 @@
+{
+  "summary": "Tested Deropo webhook name-extraction fix (BUG-1) and Pipeline UI scroll/rename/smoothing fixes (BUG-2/3). All 6 backend pytest cases pass covering pushname, sender_name, nested contact.name, placeholder auto-upgrade, fallback WA-XXXX, and PUT rename regression. Frontend scroll containers on all 3 columns have correct `overflow-y-auto min-h-0 scroll-smooth overscroll-contain` classes and actually scroll when content exceeds height. Framer-motion 0.18s transitions confirmed on chat bubbles. Chat-messages container has scrollBehavior:smooth. Rename button/input works end-to-end for a lead that exists in the leads collection (PUT /api/leads/{id} fires, toast shown, name updates).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "EditableName (Pipeline right panel)", "issue": "Rename silently no-ops when a conversation has no matching lead in `leads` collection (only a `wa_conversations` row exists). `renameCustomer` early-returns because `activeItem.lead_id` is undefined. UX-wise the input closes without any error toast, so the user thinks the rename saved. Reproduce: delete a lead but leave its wa_conversation → click that row in pipeline → try rename → nothing happens, no error.", "selector": "[data-testid='rename-btn']", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Pipeline left list", "issues": ["Some leads created historically show `Priya Kumari` name but `notes` field contains raw JSON payload dump (e.g. `{conversation: ..., messageContextInfo: {...}}`). Should be scrubbed to just the human message before storing in notes. Cosmetic — not part of this bug fix scope."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_deropo_name_fix.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL/MEDIUM: In `renameCustomer` in `/app/frontend/src/pages/Pipeline.jsx`, when `activeItem?.lead_id` is missing, either (a) auto-create a lead first with the new name + mobile, or (b) show a toast like 'Cannot rename — no lead attached'. Currently it silently does nothing which is confusing.",
+    "OPTIONAL/COSMETIC: Sanitize `notes` field when auto-creating a lead from webhook so we don't store raw serialized JSON of message metadata. Some existing leads have unreadable notes."
+  ],
+  "critical_code_review_comments": [
+    "Backend fix (deropo.py parse_webhook) is clean — broad set of name aliases + nested contact.name lookup covers real Deropo payload variations.",
+    "whatsapp.py `_ensure_lead` auto-upgrade guard uses `startswith('WA ') and len<=8` — safe against overwriting legit names.",
+    "Frontend flex scroll fix is textbook correct: `min-h-0` on flex children plus `overflow-y-auto scroll-smooth overscroll-contain` — verified all three columns scroll independently.",
+    "Framer-motion transition duration 0.18s confirmed on `AnimatePresence` message bubbles — feels smooth.",
+    "Minor: `EditableName` silent no-op when lead_id missing (see action item)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_deropo_name_fix.py (new)"
+  ],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "95% (rename + scroll + smoothing all confirmed working; one minor UX guard suggestion)"},
+  "test_credentials": "admin@rcbevents.com / admin123",
+  "seed_data_creation": "Backend tests created leads for 919000000111, 222, 333, 444, 555, 666 and cleaned them up via DELETE /api/leads/{id} in fixture teardown. UI test renamed Priya Kumari lead and reverted the name back to 'Priya Kumari' — no lingering test data in leads.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend name-extraction fix fully verified via pytest at /app/backend/tests/test_deropo_name_fix.py (6/6 pass). Frontend scroll classes verified via runtime style probe (scrollHeight>clientHeight, overflowY:auto). Rename works only when a lead row exists — if a wa_conversation exists without a matching lead, rename silently no-ops. Deropo webhook does NOT require auth; /api/leads and /api/whatsapp/conversations require Bearer token from POST /api/auth/login. Frontend token stored in localStorage key `rcb_token`.",
+  "rca of the issue": "BUG-1 root cause: previous parse_webhook only looked at `data.name`/`data.profile_name` — Deropo actually sends `pushname`, `sender_name`, or nested `contact.name` variants. Fix broadens the alias list and adds nested contact.name lookup, plus `_ensure_lead` now upgrades placeholder `WA XXXX` names in-place when a later webhook arrives with a real profile_name. BUG-2 root cause: flexbox scroll trap — parent flex children didn't have `min-h-0`, so overflow-y-auto never kicked in. Fixed by adding `min-h-0` to each of the 3 columns and their inner scroll containers, plus `scroll-smooth overscroll-contain`. BUG-3: framer-motion 0.18s transitions + scroll-smooth CSS."
+}

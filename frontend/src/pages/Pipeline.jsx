@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import {
   Plus, X, Search, Send, MessageCircle, MapPin, Calendar as CalIcon,
   ChevronLeft, Phone, Package as PkgIcon, Link2, QrCode, FileText, UserPlus,
-  StickyNote, CheckCheck, Check, AlertTriangle, Paperclip,
+  StickyNote, CheckCheck, Check, AlertTriangle, Edit3,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -183,6 +183,21 @@ export default function Pipeline() {
     } catch { toast.error("Failed to save notes"); }
   };
 
+  const renameCustomer = async (newName) => {
+    if (!activeItem?.lead_id || !newName.trim()) return;
+    try {
+      await api.put(`/leads/${activeItem.lead_id}`, {
+        name: newName.trim(), mobile: activeItem.wa_id,
+        stage: activeItem.stage, source: "WhatsApp",
+        notes: activeItem.notes || "", event_date: activeItem.event_date || null,
+        theme: "", location: activeItem.location || "",
+      });
+      toast.success("Name updated");
+      await loadLeads();
+      await loadConvos();
+    } catch { toast.error("Rename failed"); }
+  };
+
   const submitLead = async (e) => {
     e.preventDefault();
     await api.post("/leads", form);
@@ -265,10 +280,10 @@ export default function Pipeline() {
       </div>
 
       {/* Three-column layout */}
-      <div className="grid grid-cols-1 md:grid-cols-[340px_minmax(0,1fr)_320px] gap-0 bg-white border border-black/10 rounded-3xl overflow-hidden h-[calc(100vh-220px)] min-h-[540px]">
+      <div className="grid grid-cols-1 md:grid-cols-[340px_minmax(0,1fr)_320px] gap-0 bg-white border border-black/10 rounded-3xl overflow-hidden h-[calc(100vh-200px)] min-h-[540px]">
 
         {/* LEFT: Conversation list */}
-        <div className={`border-r border-black/10 flex flex-col ${activeWa ? "hidden md:flex" : "flex"}`}>
+        <div className={`border-r border-black/10 flex flex-col min-h-0 ${activeWa ? "hidden md:flex" : "flex"}`}>
           <div className="p-3 border-b border-black/5 space-y-2">
             <div className="relative">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/40" />
@@ -291,13 +306,13 @@ export default function Pipeline() {
               ))}
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto min-h-0 scroll-smooth overscroll-contain">
             {items.length === 0 && <div className="p-6 text-center text-sm text-black/40">No leads yet.</div>}
             {items.map((it) => (
               <button
                 key={it.wa_id} data-testid={`lead-item-${it.wa_id}`}
                 onClick={() => { setActiveWa(it.wa_id); setShowProfile(false); }}
-                className={`w-full text-left px-4 py-3 border-b border-black/5 flex gap-3 items-start hover:bg-black/[0.02] ${
+                className={`w-full text-left px-4 py-3 border-b border-black/5 flex gap-3 items-start transition-colors duration-150 hover:bg-black/[0.02] ${
                   activeWa === it.wa_id ? "bg-red-50/50" : ""
                 }`}
               >
@@ -323,7 +338,7 @@ export default function Pipeline() {
         </div>
 
         {/* CENTER: Chat panel */}
-        <div className={`flex flex-col ${activeWa ? "flex" : "hidden md:flex"} ${showProfile ? "hidden md:flex" : ""}`}>
+        <div className={`flex flex-col min-h-0 ${activeWa ? "flex" : "hidden md:flex"} ${showProfile ? "hidden md:flex" : ""}`}>
           {!activeWa ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-[#F8F9FA]">
               <div className="w-20 h-20 rounded-full bg-white shadow-md flex items-center justify-center mb-4">
@@ -367,14 +382,15 @@ export default function Pipeline() {
               )}
 
               {/* Messages */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-[#ECE5DD]/40" data-testid="chat-messages" style={{ backgroundImage: "url(\"https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png\")" }}>
+              <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-2 bg-[#ECE5DD]/40 scroll-smooth overscroll-contain" data-testid="chat-messages" style={{ backgroundImage: "url(\"https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png\")" }}>
                 {messages.length === 0 && <div className="text-center text-xs text-black/40 py-10">No messages yet.</div>}
-                <AnimatePresence>
+                <AnimatePresence initial={false}>
                   {messages.map((m) => (
                     <motion.div
                       key={m.id}
-                      initial={{ opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0 }}
+                      initial={{ opacity: 0, y: 6, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      transition={{ duration: 0.18, ease: "easeOut" }}
                       className={`flex ${m.direction === "out" ? "justify-end" : "justify-start"}`}
                     >
                       <div className={`max-w-[75%] rounded-2xl px-3 py-2 text-sm shadow-sm ${
@@ -430,7 +446,7 @@ export default function Pipeline() {
         </div>
 
         {/* RIGHT: Customer profile */}
-        <div className={`border-l border-black/10 bg-white flex-col overflow-y-auto ${activeWa && showProfile ? "flex" : (activeWa ? "hidden md:flex" : "hidden md:flex")}`}>
+        <div className={`border-l border-black/10 bg-white flex-col overflow-y-auto min-h-0 scroll-smooth overscroll-contain ${activeWa && showProfile ? "flex" : (activeWa ? "hidden md:flex" : "hidden md:flex")}`}>
           {!activeWa ? (
             <div className="flex-1 flex items-center justify-center p-6 text-center text-sm text-black/40">
               Customer details will appear here
@@ -445,8 +461,12 @@ export default function Pipeline() {
                 <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#E63946] to-[#8B0000] text-white flex items-center justify-center font-bold text-xl mx-auto mb-2">
                   {initials(activeItem?.name)}
                 </div>
-                <p className="font-display font-bold text-lg">{activeItem?.name}</p>
-                <p className="text-xs text-black/50 flex items-center justify-center gap-1"><Phone size={10} /> +{activeWa}</p>
+                <EditableName
+                  key={activeItem?.lead_id || activeWa}
+                  initial={activeItem?.name || ""}
+                  onSave={renameCustomer}
+                />
+                <p className="text-xs text-black/50 flex items-center justify-center gap-1 mt-1"><Phone size={10} /> +{activeWa}</p>
                 <div className="mt-2 flex justify-center">
                   <select
                     value={activeItem?.stage || "Lead"}
@@ -604,15 +624,53 @@ const NotesBox = ({ initial, onSave }) => {
         onChange={(e) => { setVal(e.target.value); setDirty(true); }}
         rows={4}
         placeholder="Team-only notes about this customer..."
-        className="w-full text-xs border border-black/10 rounded-xl px-3 py-2 resize-none focus:border-[#E63946] outline-none"
+        className="w-full text-xs border border-black/10 rounded-xl px-3 py-2 resize-none focus:border-[#E63946] outline-none transition-colors"
       />
       {dirty && (
         <button
           onClick={() => { onSave(val); setDirty(false); }}
           data-testid="save-notes"
-          className="mt-2 w-full py-2 rounded-full bg-black text-white text-xs font-semibold hover:bg-black/80"
+          className="mt-2 w-full py-2 rounded-full bg-black text-white text-xs font-semibold hover:bg-black/80 transition-colors"
         >Save notes</button>
       )}
     </div>
+  );
+};
+
+const EditableName = ({ initial, onSave }) => {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(initial || "");
+  useEffect(() => { setVal(initial || ""); }, [initial]);
+  const commit = () => {
+    setEditing(false);
+    if (val.trim() && val.trim() !== initial) onSave(val.trim());
+  };
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        data-testid="rename-input"
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") { setEditing(false); setVal(initial || ""); }
+        }}
+        className="font-display font-bold text-lg text-center bg-transparent border-b-2 border-[#E63946] outline-none w-full"
+      />
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      data-testid="rename-btn"
+      title="Click to rename"
+      className="group inline-flex items-center gap-1.5 mx-auto hover:text-[#E63946] transition-colors"
+    >
+      <span className="font-display font-bold text-lg">{initial}</span>
+      <Edit3 size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+    </button>
   );
 };
