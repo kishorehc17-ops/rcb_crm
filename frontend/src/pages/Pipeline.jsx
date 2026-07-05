@@ -184,7 +184,25 @@ export default function Pipeline() {
   };
 
   const renameCustomer = async (newName) => {
-    if (!activeItem?.lead_id || !newName.trim()) return;
+    if (!newName.trim()) return;
+    if (!activeItem?.lead_id) {
+      // No lead exists for this conversation (chat-only). Create one so the rename sticks.
+      try {
+        await api.post("/leads", {
+          name: newName.trim(),
+          mobile: activeWa,
+          source: "WhatsApp",
+          stage: "Lead",
+          notes: "",
+        });
+        toast.success("Lead created & named");
+        await loadLeads();
+        await loadConvos();
+      } catch (e) {
+        toast.error(e.response?.data?.detail || "Could not create lead");
+      }
+      return;
+    }
     try {
       await api.put(`/leads/${activeItem.lead_id}`, {
         name: newName.trim(), mobile: activeItem.wa_id,
