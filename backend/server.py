@@ -131,12 +131,23 @@ class BookingIn(BaseModel):
 
 
 class PackageIn(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     name: str
     price: float
     decorations: List[str] = []
     addons: List[str] = []
     max_addons: int = 0
     active: bool = True
+    # Optional presentation fields for the redesigned UI (backwards-compatible)
+    offer_price: Optional[float] = None
+    description: Optional[str] = ""
+    photos: List[str] = []
+    videos: List[str] = []
+    brochure_url: Optional[str] = ""
+    cover_image: Optional[str] = ""
+    tags: List[str] = []
+    badge: Optional[str] = ""  # POPULAR / BEST SELLER / PREMIUM / NEW / LIMITED / MOST BOOKED
+    status: Optional[str] = ""  # Active / Inactive / Draft (falls back to `active` flag)
 
 
 class PaymentIn(BaseModel):
@@ -550,6 +561,61 @@ async def update_package(pkg_id: str, data: PackageIn, user: dict = Depends(get_
 async def delete_package(pkg_id: str, user: dict = Depends(get_current_user)):
     await db.packages.delete_one({"id": pkg_id})
     return {"ok": True}
+
+
+@api_router.post("/packages/{pkg_id}/duplicate")
+async def duplicate_package(pkg_id: str, user: dict = Depends(get_current_user)):
+    orig = await db.packages.find_one({"id": pkg_id}, {"_id": 0})
+    if not orig:
+        raise HTTPException(404, "Package not found")
+    orig["id"] = str(uuid.uuid4())
+    orig["name"] = f"{orig.get('name', 'Package')} (copy)"
+    orig["active"] = False
+    orig["status"] = "Draft"
+    orig["created_at"] = now_iso()
+    await db.packages.insert_one(orig)
+    orig.pop("_id", None)
+    return orig
+
+
+@api_router.get("/packages/analytics")
+async def packages_analytics(user: dict = Depends(get_current_user)):
+    """Compute bookings count + revenue + WA sent count per package. Read-only."""
+    from collections import defaultdict
+    bookings = defaultdict(lambda: {"count": 0, "revenue": 0.0, "package_name": ""})
+    async for b in db.bookings.find({}, {"package_id": 1, "package_name": 1, "advance_paid": 1, "total_amount": 1}):
+        pid = b.get("package_id")
+        if not pid:
+            continue
+        bookings[pid]["count"] += 1
+        bookings[pid]["revenue"] += float(b.get("advance_paid") or 0)
+        bookings[pid]["package_name"] = b.get("package_name") or ""
+
+    # Sent-via-WA count: proxy = outbound wa_messages that start with "*<package_name>*"
+    sent_by_name = defaultdict(int)
+    async for m in db.wa_messages.find({"direction": "out"}, {"text": 1}):
+        t = (m.get("text") or "").strip()
+        if t.startswith("*"):
+            end = t.find("*", 1)
+            if end > 1:
+                sent_by_name[t[1:end]] += 1
+
+    # Build per-package summary keyed by id
+    result = {}
+    async for p in db.packages.find({}, {"id": 1, "name": 1}):
+        pid = p["id"]
+        b = bookings.get(pid, {"count": 0, "revenue": 0.0})
+        sent = sent_by_name.get(p.get("name", ""), 0)
+        result[pid] = {
+            "bookings": b["count"],
+            "revenue": round(b["revenue"], 2),
+            "sent_via_whatsapp": sent,
+            "conversion_rate": round((b["count"] / sent) * 100, 1) if sent > 0 else 0,
+        }
+    # Totals for the stats bar
+    total_bookings = sum(v["bookings"] for v in result.values())
+    total_revenue = sum(v["revenue"] for v in result.values())
+    return {"per_package": result, "totals": {"bookings": total_bookings, "revenue": total_revenue}}
 
 
 # ---------- Payments ----------
