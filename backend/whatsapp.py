@@ -370,25 +370,53 @@ def build_router(get_current_user, db):
         pkg = await db.packages.find_one({"id": data.package_id}, {"_id": 0})
         if not pkg:
             raise HTTPException(404, "Package not found")
-        # Compose caption
-        includes = pkg.get("includes") or []
+        # Compose caption — read from both new + legacy field names
+        includes = pkg.get("decorations") or pkg.get("includes") or []
         addons = pkg.get("addons") or pkg.get("available_addons") or []
         max_ad = pkg.get("max_addons")
-        parts = [
-            f"*{pkg.get('name', 'Package')}* — ₹{pkg.get('price', 0):,}",
-        ]
+        price = pkg.get("price") or 0
+        offer_price = pkg.get("offer_price")
+        try:
+            price_int = int(round(float(price)))
+        except Exception:
+            price_int = 0
+        offer_int = None
+        if offer_price:
+            try:
+                offer_int = int(round(float(offer_price)))
+            except Exception:
+                offer_int = None
+
+        header = f"*{pkg.get('name', 'Package')}*"
+        if offer_int and offer_int < price_int:
+            savings = round(((price_int - offer_int) / price_int) * 100)
+            price_line = f"~₹{price_int:,}~  *₹{offer_int:,}*  🎉 {savings}% OFF"
+        else:
+            price_line = f"₹{price_int:,}"
+        parts = [f"{header}", price_line]
+        if pkg.get("description"):
+            parts.append("")
+            parts.append(pkg["description"])
         if includes:
-            parts.append("\n_Includes:_")
-            parts.extend([f"• {x}" for x in includes[:10]])
+            parts.append("")
+            parts.append("_Includes:_")
+            parts.extend([f"✔ {x}" for x in includes[:10]])
         if addons:
-            parts.append(f"\n_Add-ons available_ (pick up to {max_ad or 'any'}):")
+            parts.append("")
+            if max_ad:
+                parts.append(f"_Add-ons (pick up to {max_ad}):_")
+            else:
+                parts.append("_Add-ons:_")
             parts.extend([f"• {x}" for x in addons[:8]])
-        parts.append("\nReply here to book. 🎈")
+        parts.append("")
+        parts.append("Reply here to book. 🎈")
         caption = "\n".join(parts)
 
-        # Try to send package cover image(s) — use first if present
-        photos = pkg.get("photos") or ([pkg.get("photo")] if pkg.get("photo") else [])
-        photos = [p for p in photos if p]
+        # Cover / gallery photos — new field first, then legacy fallbacks
+        photos = (pkg.get("photos") or []) + ([pkg.get("cover_image")] if pkg.get("cover_image") else []) + ([pkg.get("photo")] if pkg.get("photo") else [])
+        # de-duplicate while preserving order and drop empties
+        seen = set()
+        photos = [p for p in photos if p and not (p in seen or seen.add(p))]
         sent_msgs = []
         try:
             from deropo import is_enabled as _deropo_on, send_image as _dsend_image, send_text as _dsend_text
@@ -398,7 +426,7 @@ def build_router(get_current_user, db):
                 m = await _insert_message(db, wa_id, "out", caption, "image", photos[0], r.get("provider_id"))
                 await db.wa_messages.update_one({"id": m["id"]}, {"$set": {"status": "sent (deropo)" if r.get("ok") else "failed"}})
                 sent_msgs.append(m)
-                # Send extra photos without captions
+                # Send extra photos without captions (max 2 more so we don't spam)
                 for p in photos[1:3]:
                     r2 = await _dsend_image(wa_id, p, "")
                     m2 = await _insert_message(db, wa_id, "out", "[image]", "image", p, r2.get("provider_id"))
@@ -423,7 +451,7 @@ def build_router(get_current_user, db):
         profile_name = (convo or {}).get("profile_name", "")
         await _upsert_conversation(db, wa_id, profile_name,
                                    f"📦 Package: {pkg.get('name')}", "out")
-        return {"messages": sent_msgs, "package": pkg.get("name")}
+        return {"messages": sent_msgs, "package": pkg.get("name"), "caption": caption}
 
     return router
 
