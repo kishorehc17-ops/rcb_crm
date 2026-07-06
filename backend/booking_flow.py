@@ -27,6 +27,10 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+GOOGLE_REVIEW_URL = os.environ.get(
+    "GOOGLE_REVIEW_URL", "https://maps.app.goo.gl/RA3EktprJ4rqN5Su7"
+)
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -191,6 +195,9 @@ async def apply_payment(db, booking_id: str, amount: float, method: str = "Razor
             logger.info(f"apply_payment: duplicate rzp_payment_id {rzp_pay_id}, skipping")
             b.pop("_id", None)
             return apply_derived(b)
+
+    old_status = b.get("booking_status") or b.get("status") or "Pending"
+
     new_advance = float(b.get("advance_paid") or 0) + float(amount)
     receipt_no = "RCPT-" + datetime.now(timezone.utc).strftime("%y%m%d") + "-" + uuid.uuid4().hex[:5].upper()
     payment_doc = {
@@ -218,16 +225,24 @@ async def apply_payment(db, booking_id: str, amount: float, method: str = "Razor
         "payment_status": updated["payment_status"],
         "status": updated["status"],
     }})
+
+    # Send thank-you WhatsApp when transitioning to Completed
+    new_status = updated["booking_status"]
+    if new_status == "Completed" and old_status != "Completed" and not b.get("thank_you_sent"):
+        await send_thank_you_whatsapp(db, updated)
+
     return updated
 
 
 async def sweep_event_day(db):
     """Flip Confirmed -> In Progress for bookings whose event_date is today.
+    Also transitions Fully Paid bookings to Completed.
     Idempotent, run periodically."""
     today = datetime.now(timezone.utc).date().isoformat()
     async for b in db.bookings.find({"event_date": today}):
+        old_status = b.get("booking_status") or b.get("status") or "Pending"
         derived = apply_derived({**b})
-        if derived["booking_status"] != b.get("booking_status"):
+        if derived["booking_status"] != old_status:
             await db.bookings.update_one({"id": b["id"]}, {"$set": {
                 "booking_status": derived["booking_status"],
                 "payment_status": derived["payment_status"],
@@ -236,10 +251,74 @@ async def sweep_event_day(db):
             }})
             logger.info(f"sweep: {b.get('booking_number')} -> {derived['booking_status']}")
 
+            # Send thank-you WhatsApp when transitioning to Completed
+            if derived["booking_status"] == "Completed" and old_status != "Completed" and not b.get("thank_you_sent"):
+                # Re-fetch to get latest state
+                updated = await db.bookings.find_one({"id": b["id"]})
+                if updated:
+                    updated.pop("_id", None)
+                    await send_thank_you_whatsapp(db, updated)
 
-GOOGLE_REVIEW_URL = os.environ.get(
-    "GOOGLE_REVIEW_URL", "https://maps.app.goo.gl/RA3EktprJ4rqN5Su7"
-)
+
+async def send_thank_you_whatsapp(db, booking: dict) -> bool:
+    """Send a thank-you WhatsApp message to the customer when booking is Completed.
+    Sets thank_you_sent=True on the booking to prevent duplicate sends.
+    Returns True if sent successfully, False otherwise."""
+    from deropo import is_enabled as deropo_enabled, send_text as deropo_send_text
+
+    if booking.get("thank_you_sent"):
+        return False
+
+    mobile = booking.get("mobile", "")
+    if not mobile:
+        logger.warning(f"Cannot send thank-you: no mobile for booking {booking.get('booking_number', booking.get('id'))}")
+        return False
+
+    # Build the thank-you message
+    customer_name = booking.get("customer_name", "")
+    theme = booking.get("theme", "your event")
+    booking_number = booking.get("booking_number", "")
+
+    message = (
+        f"Hi {customer_name}, Thank you for choosing RCB Events! We hope you loved the {theme} decoration. "
+        f"We'd be grateful if you could take a moment to leave a Google review for us: {GOOGLE_REVIEW_URL}"
+    )
+
+    sent = False
+    try:
+        if deropo_enabled():
+            result = await deropo_send_text(mobile, message)
+            sent = result.get("ok", False)
+            if sent:
+                logger.info(f"Thank-you WhatsApp sent via Deropo to {mobile} for booking {booking_number}")
+            else:
+                logger.warning(f"Deropo send failed for {mobile}: {result.get('error')}")
+        else:
+            # Store as a local wa_message record for UI visibility (mock mode)
+            wa_doc = {
+                "id": str(uuid.uuid4()),
+                "wa_id": mobile,
+                "direction": "out",
+                "type": "text",
+                "text": message,
+                "status": "sent (mock thank-you)",
+                "created_at": now_iso(),
+            }
+            await db.wa_messages.insert_one(wa_doc)
+            logger.info(f"Thank-you message recorded locally (no Deropo) for booking {booking_number}")
+            sent = True
+    except Exception as e:
+        logger.exception(f"Failed to send thank-you WhatsApp for booking {booking_number}")
+        sent = False
+
+    if sent:
+        # Mark booking to prevent duplicate sends
+        await db.bookings.update_one(
+            {"id": booking.get("id")},
+            {"$set": {"thank_you_sent": True, "thank_you_sent_at": now_iso()}}
+        )
+
+    return sent
 
 
 def build_wa_link(mobile: str, text: str) -> str:
