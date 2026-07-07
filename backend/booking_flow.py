@@ -226,8 +226,14 @@ async def apply_payment(db, booking_id: str, amount: float, method: str = "Razor
         "status": updated["status"],
     }})
 
-    # Send thank-you WhatsApp when transitioning to Completed
+    # Send WhatsApp notifications on status transitions
     new_status = updated["booking_status"]
+
+    # Send booking_confirmed when transitioning to Confirmed
+    if new_status == "Confirmed" and old_status != "Confirmed" and not b.get("booking_confirmed_sent"):
+        await send_booking_confirmed_whatsapp(db, updated)
+
+    # Send thank-you when transitioning to Completed
     if new_status == "Completed" and old_status != "Completed" and not b.get("thank_you_sent"):
         await send_thank_you_whatsapp(db, updated)
 
@@ -237,6 +243,8 @@ async def apply_payment(db, booking_id: str, amount: float, method: str = "Razor
 async def sweep_event_day(db):
     """Flip Confirmed -> In Progress for bookings whose event_date is today.
     Also transitions Fully Paid bookings to Completed.
+    Sends event_day WhatsApp when transitioning to In Progress.
+    Sends thank-you WhatsApp when transitioning to Completed.
     Idempotent, run periodically."""
     today = datetime.now(timezone.utc).date().isoformat()
     async for b in db.bookings.find({"event_date": today}):
@@ -251,21 +259,243 @@ async def sweep_event_day(db):
             }})
             logger.info(f"sweep: {b.get('booking_number')} -> {derived['booking_status']}")
 
+            # Send event_day WhatsApp when transitioning to In Progress
+            if derived["booking_status"] == "In Progress" and old_status != "In Progress" and not b.get("event_day_sent"):
+                b.pop("_id", None)
+                await send_event_day_whatsapp(db, derived)
+
             # Send thank-you WhatsApp when transitioning to Completed
             if derived["booking_status"] == "Completed" and old_status != "Completed" and not b.get("thank_you_sent"):
-                # Re-fetch to get latest state
-                updated = await db.bookings.find_one({"id": b["id"]})
-                if updated:
-                    updated.pop("_id", None)
-                    await send_thank_you_whatsapp(db, updated)
+                await send_thank_you_whatsapp(db, derived)
+
+
+async def sweep_one_day_before(db):
+    """Send event reminder WhatsApp to customers one day before their event.
+    Runs daily, idempotent based on event_reminder_sent flag."""
+    from datetime import timedelta
+    tomorrow = (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
+    async for b in db.bookings.find({"event_date": tomorrow}):
+        if not b.get("event_reminder_sent"):
+            # Only send to Confirmed or In Progress bookings
+            status = b.get("booking_status") or b.get("status") or "Pending"
+            if status in ("Confirmed", "In Progress"):
+                b.pop("_id", None)
+                await send_event_reminder_whatsapp(db, b)
+
+
+async def _send_whatsapp(db, mobile: str, message: str, label: str = "notification") -> bool:
+    """Helper to send WhatsApp via Deropo or store locally. Returns True if sent."""
+    from deropo import is_enabled as deropo_enabled, send_text as deropo_send_text
+
+    if not mobile:
+        return False
+
+    sent = False
+    try:
+        if deropo_enabled():
+            result = await deropo_send_text(mobile, message)
+            sent = result.get("ok", False)
+            if sent:
+                logger.info(f"{label} WhatsApp sent via Deropo to {mobile}")
+            else:
+                logger.warning(f"Deropo send failed for {mobile}: {result.get('error')}")
+        else:
+            wa_doc = {
+                "id": str(uuid.uuid4()),
+                "wa_id": mobile,
+                "direction": "out",
+                "type": "text",
+                "text": message,
+                "status": f"sent (mock {label})",
+                "created_at": now_iso(),
+            }
+            await db.wa_messages.insert_one(wa_doc)
+            logger.info(f"{label} message recorded locally (no Deropo)")
+            sent = True
+    except Exception as e:
+        logger.exception(f"Failed to send {label} WhatsApp")
+        sent = False
+
+    return sent
+
+
+async def send_booking_created_whatsapp(db, booking: dict) -> bool:
+    """Send WhatsApp when a new booking is created (Pending status)."""
+    if booking.get("booking_created_sent"):
+        return False
+
+    mobile = booking.get("mobile", "")
+    customer_name = booking.get("customer_name", "Customer")
+    booking_number = booking.get("booking_number", "")
+    event_date = booking.get("event_date", "")
+    event_time = booking.get("event_time", "")
+    location = booking.get("location", "")
+    theme = booking.get("theme", "")
+    package_name = booking.get("package_name", "")
+    total_amount = booking.get("total_amount", 0)
+    advance_amount = booking.get("advance_amount", 2000)
+
+    message = (
+        f"Thank you for contacting RCB Events!\n\n"
+        f"Your booking request has been created successfully.\n\n"
+        f"Please complete the advance payment to confirm your booking.\n\n"
+        f"Booking ID: {booking_number}\n"
+        f"Customer: {customer_name}\n"
+        f"Event Date: {event_date}\n"
+        f"Event Time: {event_time}\n"
+        f"Location: {location}\n"
+        f"Theme: {theme}\n"
+        f"Package: {package_name}\n"
+        f"Total Amount: ₹{total_amount:,.0f}\n"
+        f"Advance Amount: ₹{advance_amount:,.0f}"
+    )
+
+    sent = await _send_whatsapp(db, mobile, message, "booking_created")
+    if sent:
+        await db.bookings.update_one(
+            {"id": booking.get("id")},
+            {"$set": {"booking_created_sent": True, "booking_created_sent_at": now_iso()}}
+        )
+    return sent
+
+
+async def send_booking_confirmed_whatsapp(db, booking: dict) -> bool:
+    """Send WhatsApp when booking status changes to Confirmed (advance received)."""
+    if booking.get("booking_confirmed_sent"):
+        return False
+
+    mobile = booking.get("mobile", "")
+    customer_name = booking.get("customer_name", "Customer")
+    booking_number = booking.get("booking_number", "")
+    event_date = booking.get("event_date", "")
+    event_time = booking.get("event_time", "")
+    location = booking.get("location", "")
+    theme = booking.get("theme", "")
+    package_name = booking.get("package_name", "")
+    addons = ", ".join(booking.get("selected_addons", [])) or "None"
+    special_req = booking.get("special_requirements", "None")
+    total_amount = booking.get("total_amount", 0)
+    advance_paid = booking.get("advance_paid", 0)
+    balance = float(total_amount) - float(advance_paid)
+
+    message = (
+        f"🎉 *Booking Confirmed!*\n\n"
+        f"Dear *{customer_name}*,\n\n"
+        f"Thank you for choosing **RCB Events**.\n"
+        f"Your booking has been successfully confirmed.\n\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"📌 *Booking Details*\n\n"
+        f"🆔 Booking ID: {booking_number}\n"
+        f"📅 Event Date: {event_date}\n"
+        f"🕒 Event Time: {event_time}\n"
+        f"📍 Location: {location}\n"
+        f"🎈 Theme: {theme}\n"
+        f"🎁 Package: {package_name}\n"
+        f"✨ Add-ons: {addons}\n"
+        f"📝 Special Requirements: {special_req}\n\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"💰 *Payment Summary*\n\n"
+        f"Package Amount: ₹{total_amount:,.0f}\n"
+        f"Advance Paid: ₹{advance_paid:,.0f}\n"
+        f"Balance Amount: ₹{balance:,.0f}\n\n"
+        f"━━━━━━━━━━━━━━━━━━\n\n"
+        f"Our team will contact you before the event for final coordination.\n\n"
+        f"Thank you for trusting **RCB Events**.\n\n"
+        f"❤️ Team RCB Events"
+    )
+
+    sent = await _send_whatsapp(db, mobile, message, "booking_confirmed")
+    if sent:
+        await db.bookings.update_one(
+            {"id": booking.get("id")},
+            {"$set": {"booking_confirmed_sent": True, "booking_confirmed_sent_at": now_iso()}}
+        )
+    return sent
+
+
+async def send_event_reminder_whatsapp(db, booking: dict) -> bool:
+    """Send WhatsApp one day before the event with balance reminder."""
+    if booking.get("event_reminder_sent"):
+        return False
+
+    mobile = booking.get("mobile", "")
+    customer_name = booking.get("customer_name", "Customer")
+    booking_number = booking.get("booking_number", "")
+    event_date = booking.get("event_date", "")
+    event_time = booking.get("event_time", "")
+    location = booking.get("location", "")
+    total_amount = booking.get("total_amount", 0)
+    advance_paid = booking.get("advance_paid", 0)
+    balance = float(total_amount) - float(advance_paid)
+
+    message = (
+        f"📅 *Event Reminder*\n\n"
+        f"Dear {customer_name},\n\n"
+        f"This is a friendly reminder that your event is tomorrow!\n\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"📌 *Event Details*\n\n"
+        f"🆔 Booking ID: {booking_number}\n"
+        f"📅 Date: {event_date}\n"
+        f"🕒 Time: {event_time}\n"
+        f"📍 Venue: {location}\n\n"
+    )
+
+    if balance > 0:
+        message += (
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"💰 *Payment Reminder*\n\n"
+            f"Balance Due: ₹{balance:,.0f}\n"
+            f"Please have the payment ready on event day.\n\n"
+        )
+
+    message += (
+        f"Our team will arrive on time for setup.\n\n"
+        f"Thank you for choosing **RCB Events**!\n\n"
+        f"❤️ Team RCB Events"
+    )
+
+    sent = await _send_whatsapp(db, mobile, message, "event_reminder")
+    if sent:
+        await db.bookings.update_one(
+            {"id": booking.get("id")},
+            {"$set": {"event_reminder_sent": True, "event_reminder_sent_at": now_iso()}}
+        )
+    return sent
+
+
+async def send_event_day_whatsapp(db, booking: dict) -> bool:
+    """Send WhatsApp on the event day when status becomes In Progress."""
+    if booking.get("event_day_sent"):
+        return False
+
+    mobile = booking.get("mobile", "")
+    customer_name = booking.get("customer_name", "Customer")
+    event_time = booking.get("event_time", "")
+    location = booking.get("location", "")
+
+    message = (
+        f"🎉 *Today is Your Event!*\n\n"
+        f"Dear {customer_name},\n\n"
+        f"Today is your special event at {event_time}!\n"
+        f"📍 Venue: {location}\n\n"
+        f"Our decoration team will arrive as scheduled to set up everything beautifully.\n\n"
+        f"Thank you for choosing **RCB Events**.\n\n"
+        f"❤️ Team RCB Events"
+    )
+
+    sent = await _send_whatsapp(db, mobile, message, "event_day")
+    if sent:
+        await db.bookings.update_one(
+            {"id": booking.get("id")},
+            {"$set": {"event_day_sent": True, "event_day_sent_at": now_iso()}}
+        )
+    return sent
 
 
 async def send_thank_you_whatsapp(db, booking: dict) -> bool:
     """Send a thank-you WhatsApp message to the customer when booking is Completed.
     Sets thank_you_sent=True on the booking to prevent duplicate sends.
     Returns True if sent successfully, False otherwise."""
-    from deropo import is_enabled as deropo_enabled, send_text as deropo_send_text
-
     if booking.get("thank_you_sent"):
         return False
 
@@ -274,7 +504,6 @@ async def send_thank_you_whatsapp(db, booking: dict) -> bool:
         logger.warning(f"Cannot send thank-you: no mobile for booking {booking.get('booking_number', booking.get('id'))}")
         return False
 
-    # Build the thank-you message
     customer_name = booking.get("customer_name", "")
     theme = booking.get("theme", "your event")
     booking_number = booking.get("booking_number", "")
@@ -284,40 +513,12 @@ async def send_thank_you_whatsapp(db, booking: dict) -> bool:
         f"We'd be grateful if you could take a moment to leave a Google review for us: {GOOGLE_REVIEW_URL}"
     )
 
-    sent = False
-    try:
-        if deropo_enabled():
-            result = await deropo_send_text(mobile, message)
-            sent = result.get("ok", False)
-            if sent:
-                logger.info(f"Thank-you WhatsApp sent via Deropo to {mobile} for booking {booking_number}")
-            else:
-                logger.warning(f"Deropo send failed for {mobile}: {result.get('error')}")
-        else:
-            # Store as a local wa_message record for UI visibility (mock mode)
-            wa_doc = {
-                "id": str(uuid.uuid4()),
-                "wa_id": mobile,
-                "direction": "out",
-                "type": "text",
-                "text": message,
-                "status": "sent (mock thank-you)",
-                "created_at": now_iso(),
-            }
-            await db.wa_messages.insert_one(wa_doc)
-            logger.info(f"Thank-you message recorded locally (no Deropo) for booking {booking_number}")
-            sent = True
-    except Exception as e:
-        logger.exception(f"Failed to send thank-you WhatsApp for booking {booking_number}")
-        sent = False
-
+    sent = await _send_whatsapp(db, mobile, message, "thank-you")
     if sent:
-        # Mark booking to prevent duplicate sends
         await db.bookings.update_one(
             {"id": booking.get("id")},
             {"$set": {"thank_you_sent": True, "thank_you_sent_at": now_iso()}}
         )
-
     return sent
 
 

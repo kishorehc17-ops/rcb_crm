@@ -389,6 +389,8 @@ from booking_flow import (
     create_balance_qr as _create_balance_qr,
     apply_payment as _apply_payment,
     sweep_event_day as _sweep_event_day,
+    sweep_one_day_before as _sweep_one_day_before,
+    send_booking_created_whatsapp as _send_booking_created_whatsapp,
     build_wa_link as _wa_link,
     GOOGLE_REVIEW_URL as _GOOGLE_REVIEW_URL,
 )
@@ -425,6 +427,11 @@ async def create_booking(data: BookingIn, user: dict = Depends(get_current_user)
     _apply_derived(doc)
     await db.bookings.insert_one(doc)
     doc.pop("_id", None)
+    # Send booking_created WhatsApp notification
+    try:
+        await _send_booking_created_whatsapp(db, doc)
+    except Exception as e:
+        logger.warning(f"Failed to send booking_created WhatsApp: {e}")
     return doc
 
 
@@ -1152,6 +1159,7 @@ async def on_startup():
 
     # Background sweep: flip Confirmed -> In Progress and Fully Paid -> Completed
     # for bookings whose event_date is today. Runs hourly.
+    # Also runs one-day-before reminder sweep for tomorrow's events.
     import asyncio
 
     async def _bg_sweep():
@@ -1160,6 +1168,10 @@ async def on_startup():
                 await _sweep_event_day(db)
             except Exception as e:
                 logger.warning(f"sweep_event_day failed: {e}")
+            try:
+                await _sweep_one_day_before(db)
+            except Exception as e:
+                logger.warning(f"sweep_one_day_before failed: {e}")
             await asyncio.sleep(3600)  # every hour
 
     asyncio.create_task(_bg_sweep())
@@ -1168,6 +1180,10 @@ async def on_startup():
         await _sweep_event_day(db)
     except Exception as e:
         logger.warning(f"initial sweep failed: {e}")
+    try:
+        await _sweep_one_day_before(db)
+    except Exception as e:
+        logger.warning(f"initial one-day-before sweep failed: {e}")
 
 
 @app.on_event("shutdown")
