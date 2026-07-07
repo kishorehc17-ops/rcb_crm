@@ -1089,9 +1089,27 @@ _wa_router = _build_wa_router(get_current_user, db)
 app.include_router(_wa_router)
 
 # ---------- Deropo WhatsApp provider (incoming webhook) ----------
-from deropo import build_router as _build_deropo_router
+from deropo import build_router as _build_deropo_router, is_enabled as _deropo_is_enabled
 _deropo_router = _build_deropo_router(db, _wa_handle_incoming)
 app.include_router(_deropo_router)
+
+
+# ---------- Diagnostic endpoint for Deropo config ----------
+@api_router.get("/debug/deropo")
+async def debug_deropo_config(user: dict = Depends(get_current_user)):
+    """Check Deropo WhatsApp configuration status."""
+    import os
+    api_key = os.environ.get("DEROPO_API_KEY", "")
+    device_id = os.environ.get("DEROPO_DEVICE_ID", "")
+    base_url = os.environ.get("DEROPO_BASE_URL", "https://api.deropo.com/api")
+    return {
+        "deropo_enabled": _deropo_is_enabled(),
+        "api_key_set": bool(api_key),
+        "api_key_length": len(api_key) if api_key else 0,
+        "device_id_set": bool(device_id),
+        "device_id": device_id if device_id else None,
+        "base_url": base_url,
+    }
 
 # Serve uploaded files (mounted under /api so kubernetes ingress routes to backend)
 app.mount("/api/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")

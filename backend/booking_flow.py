@@ -287,12 +287,19 @@ async def _send_whatsapp(db, mobile: str, message: str, label: str = "notificati
     """Helper to send WhatsApp via Deropo or store locally. Returns True if sent."""
     from deropo import is_enabled as deropo_enabled, send_text as deropo_send_text
 
+    logger.info(f"_send_whatsapp called: mobile={mobile}, label={label}")
+
     if not mobile:
+        logger.warning(f"_send_whatsapp: no mobile number provided for {label}")
         return False
+
+    deropo_on = deropo_enabled()
+    logger.info(f"_send_whatsapp: Deropo enabled={deropo_on}")
 
     sent = False
     try:
-        if deropo_enabled():
+        if deropo_on:
+            logger.info(f"_send_whatsapp: sending via Deropo to {mobile}")
             result = await deropo_send_text(mobile, message)
             sent = result.get("ok", False)
             if sent:
@@ -321,10 +328,14 @@ async def _send_whatsapp(db, mobile: str, message: str, label: str = "notificati
 
 async def send_booking_created_whatsapp(db, booking: dict) -> bool:
     """Send WhatsApp when a new booking is created (Pending status)."""
+    logger.info(f"send_booking_created_whatsapp called for booking {booking.get('booking_number', booking.get('id'))}")
+
     if booking.get("booking_created_sent"):
+        logger.info(f"booking_created already sent for {booking.get('booking_number')}, skipping")
         return False
 
     mobile = booking.get("mobile", "")
+    logger.info(f"Mobile number: {mobile}")
     customer_name = booking.get("customer_name", "Customer")
     booking_number = booking.get("booking_number", "")
     event_date = booking.get("event_date", "")
